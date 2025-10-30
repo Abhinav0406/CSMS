@@ -38,6 +38,16 @@ export async function updateCommittedQty(sku: string, location: string, committe
   if (error) throw error;
 }
 
+export async function updateOnHandCurrent(sku: string, location: string, onHandCurrent: number): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from('products')
+    .update({ on_hand_current: onHandCurrent })
+    .eq('sku', sku)
+    .eq('location', location);
+  if (error) throw error;
+}
+
 export async function fetchProductBySkuLocation(sku: string, location?: string): Promise<Product | undefined> {
   if (!supabase) return undefined;
   const normSku = (sku || '').trim();
@@ -73,6 +83,17 @@ export async function fetchProductBySkuLocation(sku: string, location?: string):
     .limit(1);
   if (any.data && any.data.length > 0) return rowToProduct(any.data[0]);
   return undefined;
+}
+
+export async function fetchProductsBySku(sku: string): Promise<Product[]> {
+  if (!supabase) return [] as Product[];
+  const normSku = (sku || '').trim();
+  const { data, error } = await supabase
+    .from('products')
+    .select('*')
+    .eq('sku', normSku);
+  if (error || !data) return [] as Product[];
+  return data.map(rowToProduct);
 }
 
 function rowToProduct(r: any): Product {

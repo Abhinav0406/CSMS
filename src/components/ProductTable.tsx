@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { Product, computeAvailable, computeTotal } from '@/lib/inventory';
-import { QuantityAdjuster } from '@/components/QuantityAdjuster';
+// QuantityAdjuster removed per latest requirements; table is read-only
 import { ImageWithFallback } from '@/components/ImageWithFallback';
 import { getCurrentSession } from '@/lib/auth';
 import { fetchProducts, upsertProducts, updateOnHandNew, updateCommittedQty } from '@/lib/productsApi';
@@ -56,30 +56,33 @@ export function ProductTable({ initialProducts }: Props) {
   }, []);
 
   const updateOnHand = (sku: string, next: number) => {
-    setRows((prev) => {
-      const updated = prev.map((p) => (p.sku === sku ? { ...p, onHandNew: next } : p));
-      persist(updated);
-      return updated;
-    });
-    const item = rows.find((p) => p.sku === sku);
-    if (item) updateOnHandNew(item.sku, item.location, next).catch(() => {});
+    // no-op in table; edits happen on product detail page now
   };
 
   const updateCommitted = (sku: string, next: number) => {
-    setRows((prev) => {
-      const updated = prev.map((p) => (p.sku === sku ? { ...p, committed: next } : p));
-      persist(updated);
-      return updated;
-    });
-    const item = rows.find((p) => p.sku === sku);
-    if (item) updateCommittedQty(item.sku, item.location, next).catch(() => {});
+    // no-op; committed is read-only here
   };
 
-  const pageCount = useMemo(() => Math.max(1, Math.ceil(rows.length / PAGE_SIZE)), [rows]);
+  // Group by SKU (aggregate across locations)
+  type Agg = { sku: string; name: string; onHandCurrent: number; onHandNew: number; committed: number; incoming: number; available: number };
+  const aggregated: Agg[] = useMemo(() => {
+    const bySku = new Map<string, Agg>();
+    for (const p of rows) {
+      const a = bySku.get(p.sku) || { sku: p.sku, name: p.name, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0 };
+      a.onHandCurrent += (p.onHandCurrent || 0) || (p.onHandNew || 0);
+      a.onHandNew += p.onHandNew;
+      a.committed += p.committed;
+      a.incoming += p.incoming ?? 0;
+      bySku.set(p.sku, a);
+    }
+    for (const a of bySku.values()) a.available = a.onHandCurrent - a.committed;
+    return Array.from(bySku.values()).sort((x,y)=>x.sku.localeCompare(y.sku));
+  }, [rows]);
+  const pageCount = useMemo(() => Math.max(1, Math.ceil(aggregated.length / PAGE_SIZE)), [aggregated]);
   const data = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
-    return rows.slice(start, start + PAGE_SIZE);
-  }, [rows, page]);
+    return aggregated.slice(start, start + PAGE_SIZE);
+  }, [aggregated, page]);
 
   const exportCsv = () => {
     if (!isEdit) return;
@@ -275,7 +278,8 @@ export function ProductTable({ initialProducts }: Props) {
             <tr>
               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product Name</th>
               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
-              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
+              <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">On hand (current)</th>
+              {/* Location hidden: one row per SKU */}
               <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Incoming</th>
               <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Committed</th>
               <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Available</th>
@@ -285,30 +289,18 @@ export function ProductTable({ initialProducts }: Props) {
           </thead>
           <tbody className="divide-y divide-gray-200 bg-white">
             {data.map((p) => {
-              const available = computeAvailable(p.onHandNew, p.committed);
+              const available = p.onHandCurrent - p.committed;
               return (
-                <tr key={`${p.sku}-${p.location}`} className="hover:bg-gray-50">
+                <tr key={`${p.sku}`} className="hover:bg-gray-50">
                   <td className="px-3 py-2 text-sm font-medium text-gray-900">{p.name}</td>
                   <td className="px-3 py-2 text-sm text-gray-700">{p.sku}</td>
-                  <td className="px-3 py-2 text-sm text-gray-700">{p.location}</td>
-                  <td className="px-3 py-2 text-sm text-right tabular-nums">{p.incoming ?? 0}</td>
-                  <td className="px-3 py-2 text-sm text-right tabular-nums">
-                    {isEdit ? (
-                      <QuantityAdjuster value={p.committed} onChange={(n) => updateCommitted(p.sku, n)} min={0} />
-                    ) : (
-                      <span className="tabular-nums">{p.committed}</span>
-                    )}
-                  </td>
+                  <td className="px-3 py-2 text-sm text-right tabular-nums">{p.onHandCurrent}</td>
+                  <td className="px-3 py-2 text-sm text-right tabular-nums">{p.incoming}</td>
+                  <td className="px-3 py-2 text-sm text-right tabular-nums">{p.committed}</td>
                   <td className="px-3 py-2 text-sm text-right tabular-nums">{available}</td>
-                  <td className="px-3 py-2 text-sm text-center">
-                    {isEdit ? (
-                      <QuantityAdjuster value={p.onHandNew} onChange={(n) => updateOnHand(p.sku, n)} min={0} />
-                    ) : (
-                      <span className="tabular-nums">{p.onHandNew}</span>
-                    )}
-                  </td>
+                  <td className="px-3 py-2 text-sm text-center"><span className="tabular-nums">{p.onHandNew}</span></td>
                   <td className="px-3 py-2 text-right">
-                    <Link className="btn-outline text-xs" href={`/product/${encodeURIComponent(p.sku)}?location=${encodeURIComponent(p.location)}`}>View</Link>
+                    <Link className="btn-outline text-xs" href={`/product/${encodeURIComponent(p.sku)}`}>View</Link>
                   </td>
                 </tr>
               );
