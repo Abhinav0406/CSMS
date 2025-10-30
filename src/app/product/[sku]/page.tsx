@@ -62,7 +62,7 @@ export default function ProductDetailPage() {
   function combine(rows: Product[]): Product {
     const base = rows[0];
     const sumKey = (k: keyof Product) => rows.reduce((acc, r) => acc + (Number(r[k]) || 0), 0);
-    const currentSum = rows.reduce((acc, r) => acc + (r.onHandCurrent || r.onHandNew || 0), 0);
+    const currentSum = rows.reduce((acc, r) => acc + (typeof r.onHandCurrent === 'number' ? r.onHandCurrent : 0), 0);
     return {
       ...base,
       onHandCurrent: currentSum,
@@ -229,7 +229,7 @@ function PerLocationEditor({ rows, entries, setEntries, onSaved }: { rows: Produ
             return (
               <tr key={r.location}>
                 <td className="px-3 py-2 text-sm text-gray-700">{r.location}</td>
-                <td className="px-3 py-2 text-sm text-right tabular-nums">{(r.onHandCurrent || 0) || (r.onHandNew || 0)}</td>
+                <td className="px-3 py-2 text-sm text-right tabular-nums">{typeof r.onHandCurrent === 'number' ? r.onHandCurrent : 0}</td>
                 <td className="px-3 py-2 text-sm text-right tabular-nums">{planned}</td>
                 <td className="px-3 py-2 text-sm text-right">
                   <div className="inline-flex items-center gap-1">

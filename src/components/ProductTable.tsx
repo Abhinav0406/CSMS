@@ -69,7 +69,7 @@ export function ProductTable({ initialProducts }: Props) {
     const bySku = new Map<string, Agg>();
     for (const p of rows) {
       const a = bySku.get(p.sku) || { sku: p.sku, name: p.name, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0 };
-      a.onHandCurrent += (p.onHandCurrent || 0) || (p.onHandNew || 0);
+      a.onHandCurrent += (typeof p.onHandCurrent === 'number' ? p.onHandCurrent : 0);
       a.onHandNew += p.onHandNew;
       a.committed += p.committed;
       a.incoming += p.incoming ?? 0;
