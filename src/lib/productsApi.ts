@@ -14,8 +14,69 @@ export async function fetchProducts(): Promise<Product[]> {
 export async function upsertProducts(items: Product[]): Promise<void> {
   if (!supabase || items.length === 0) return;
   const payload = items.map(productToRow);
-  const { error } = await supabase.from('products').upsert(payload, { onConflict: 'sku,location' });
-  if (error) throw error;
+  // Chunk large imports to avoid payload limits/timeouts
+  const CHUNK = 500;
+  for (let i = 0; i < payload.length; i += CHUNK) {
+    const slice = payload.slice(i, i + CHUNK);
+    const { error } = await supabase.from('products').upsert(slice, { onConflict: 'sku,location' });
+    if (error) throw error;
+  }
+}
+
+// Variant upsert: expects rows keyed by (sku, location, color, size)
+export async function upsertProductVariants(items: Array<{
+  sku: string;
+  location: string;
+  color?: string | null;
+  size?: string | null;
+  on_hand_current?: number;
+  on_hand_new?: number;
+  committed?: number;
+  incoming?: number;
+  unavailable?: number;
+  raw?: Record<string, any>;
+}>): Promise<void> {
+  if (!supabase || items.length === 0) return;
+  const CHUNK = 500;
+  for (let i = 0; i < items.length; i += CHUNK) {
+    const slice = items.slice(i, i + CHUNK).map((v) => ({
+      sku: v.sku,
+      location: v.location,
+      color: (v.color ?? '').trim(),
+      size: (v.size ?? '').trim(),
+      on_hand_current: v.on_hand_current ?? 0,
+      on_hand_new: v.on_hand_new ?? 0,
+      committed: v.committed ?? 0,
+      incoming: v.incoming ?? 0,
+      unavailable: v.unavailable ?? 0,
+      raw: v.raw ?? {},
+    }));
+    const { error } = await supabase
+      .from('product_variants')
+      .upsert(slice, { onConflict: 'sku,location,color,size' });
+    if (error) throw error;
+  }
+}
+
+// Fetch all variants rows from product_variants
+export type ProductVariantRow = {
+  sku: string;
+  location: string;
+  color: string | null;
+  size: string | null;
+  on_hand_current: number | null;
+  on_hand_new: number | null;
+  committed: number | null;
+  incoming: number | null;
+};
+
+export async function fetchAllVariants(): Promise<ProductVariantRow[]> {
+  if (!supabase) return [] as ProductVariantRow[];
+  const { data, error } = await supabase
+    .from('product_variants')
+    .select('sku, location, color, size, on_hand_current, on_hand_new, committed, incoming');
+  if (error || !data) return [] as ProductVariantRow[];
+  return data as ProductVariantRow[];
 }
 
 export async function updateOnHandNew(sku: string, location: string, onHandNew: number): Promise<void> {

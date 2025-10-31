@@ -16,14 +16,21 @@ export function ImageWithFallback({ src, alt, width, height, className }: Props)
 
   useEffect(() => setImgSrc(src), [src]);
 
+  const FALLBACK = `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${width}' height='${height}' viewBox='0 0 ${width} ${height}'>
+      <rect width='100%' height='100%' fill='#f3f4f6'/>
+      <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#9ca3af' font-size='12' font-family='Arial, sans-serif'>No Image</text>
+    </svg>`
+  )}`;
+
   return (
     <Image
-      src={imgSrc || 'https://via.placeholder.com/300x200?text=No+Image'}
+      src={imgSrc || FALLBACK}
       alt={alt}
       width={width}
       height={height}
       className={className}
-      onError={() => setImgSrc('https://via.placeholder.com/300x200?text=No+Image')}
+      onError={() => setImgSrc(FALLBACK)}
     />
   );
 }
