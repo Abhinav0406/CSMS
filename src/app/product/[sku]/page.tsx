@@ -21,6 +21,8 @@ export default function ProductDetailPage() {
     try { return decodeURIComponent(raw); } catch { return raw; }
   })();
   const location = search?.get('location') || '';
+  const filterColor = (search?.get('color') || '').trim();
+  const filterSize = (search?.get('size') || '').trim();
   const STORAGE_KEY = 'csms_products_v1';
   const [product, setProduct] = useState<Product | undefined>(undefined);
   const [addQty, setAddQty] = useState<number>(0);
@@ -121,7 +123,21 @@ export default function ProductDetailPage() {
     );
   }
 
-  const available = computeAvailable(product.onHandNew, product.committed);
+  // If a variant filter is active, compute cards from filtered variants only
+  const filteredVariants = (variants || []).filter((v) => {
+    const c = (v.color || '').trim();
+    const s = (v.size || '').trim();
+    if (filterColor && c.toLowerCase() !== filterColor.toLowerCase()) return false;
+    if (filterSize && s.toLowerCase() !== filterSize.toLowerCase()) return false;
+    return true;
+  });
+  const variantCurrent = filteredVariants.reduce((a, v) => a + (Number(v.on_hand_current) || 0), 0);
+  const variantNew = filteredVariants.reduce((a, v) => a + (Number(v.on_hand_new) || 0), 0);
+  const variantCommitted = filteredVariants.reduce((a, v) => a + (Number((v as any).committed) || 0), 0);
+  const cardsOnHandCurrent = (filterColor || filterSize) ? variantCurrent : product.onHandCurrent;
+  const cardsOnHandNew = (filterColor || filterSize) ? variantNew : product.onHandNew;
+  const cardsCommitted = (filterColor || filterSize) ? variantCommitted : product.committed;
+  const available = (cardsOnHandCurrent - cardsCommitted);
 
   return (
     <div className="space-y-4">
@@ -153,10 +169,10 @@ export default function ProductDetailPage() {
         <div className="card p-4 md:col-span-2 space-y-4">
           <h3 className="text-base font-semibold">Inventory</h3>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-            <Breakdown label="On hand (current)" value={product.onHandCurrent} />
-            <Breakdown label="On hand (new, planned)" value={product.onHandNew} highlight />
-            <Breakdown label="Committed" value={product.committed} />
-            <Breakdown label="Available" value={computeAvailable(product.onHandCurrent, product.committed)} />
+            <Breakdown label="On hand (current)" value={cardsOnHandCurrent} />
+            <Breakdown label="On hand (new, planned)" value={cardsOnHandNew} highlight />
+            <Breakdown label="Committed" value={cardsCommitted} />
+            <Breakdown label="Available" value={available} />
           </div>
 
           <div className="rounded border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700 space-y-2">
@@ -202,6 +218,42 @@ export default function ProductDetailPage() {
               <button
                 className="btn-outline"
                 onClick={async () => {
+                  // If variant is filtered, commit variant-level new to current, and sync products totals
+                  if (filterColor || filterSize) {
+                    const deltasByLoc = new Map<string, number>();
+                    for (const v of filteredVariants) {
+                      const delta = Number(v.on_hand_new || 0);
+                      const newCurrent = Number(v.on_hand_current || 0) + delta;
+                      try {
+                        await supabase
+                          .from('product_variants')
+                          .update({ on_hand_current: newCurrent, on_hand_new: 0 })
+                          .eq('sku', sku)
+                          .eq('location', v.location)
+                          .eq('color', v.color ?? '')
+                          .eq('size', v.size ?? '');
+                      } catch {}
+                      deltasByLoc.set(v.location, (deltasByLoc.get(v.location) || 0) + delta);
+                    }
+                    // Update products per location using accumulated deltas
+                    const updated: Product[] = [];
+                    for (const r of locations) {
+                      const delta = deltasByLoc.get(r.location) || 0;
+                      if (delta === 0) { updated.push(r); continue; }
+                      const newCurrent = (r.onHandCurrent || 0) + delta;
+                      try {
+                        await updateOnHandCurrent(r.sku, r.location, newCurrent);
+                        await updateOnHandNew(r.sku, r.location, 0);
+                      } catch {}
+                      updated.push({ ...r, onHandCurrent: newCurrent, onHandNew: 0 });
+                    }
+                    setLocations(updated);
+                    const combined = combine(updated);
+                    setProduct(combined);
+                    return;
+                  }
+
+                  // No variant filter → commit per-location planned totals
                   const updatedRows: Product[] = [];
                   for (const r of locations) {
                     const delta = r.onHandNew || 0;
@@ -235,26 +287,31 @@ export default function ProductDetailPage() {
             <Link href="/mv" className="btn-outline">Back to Master View</Link>
           </div>
 
-          {/* Returns flow hidden for now per simplified UI */}
-          <div className="mt-4">
-            <h4 className="mb-2 text-sm font-medium">Per-location adjustment</h4>
-            <PerLocationEditor
-              rows={locations}
-              entries={entries}
-              setEntries={setEntries}
-              isEdit={isEdit}
-              onSaved={async (updated) => {
-                setLocations(updated);
-                const combined = combine(updated);
-                setProduct(combined);
-              }}
-            />
-          </div>
+          {/* Hide per-location totals when a specific variant is selected to avoid confusion */}
+          {!filterColor && !filterSize && (
+            <div className="mt-4">
+              <h4 className="mb-2 text-sm font-medium">Per-location adjustment</h4>
+              <PerLocationEditor
+                rows={locations}
+                entries={entries}
+                setEntries={setEntries}
+                isEdit={isEdit}
+                onSaved={async (updated) => {
+                  setLocations(updated);
+                  const combined = combine(updated);
+                  setProduct(combined);
+                }}
+              />
+            </div>
+          )}
 
           {/* Variant grid (Color/Size per location) */}
           {variants.length > 0 && (
             <div className="mt-6">
               <h4 className="mb-2 text-sm font-medium">Per-variant adjustment</h4>
+              {(filterColor || filterSize) && (
+                <div className="mb-2 text-xs text-gray-600">Showing variant: {filterColor || '—'} {filterColor && filterSize ? '•' : ''} {filterSize || ''}</div>
+              )}
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
@@ -267,7 +324,15 @@ export default function ProductDetailPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 bg-white">
-                    {variants.map((v) => {
+                    {variants
+                      .filter((v) => {
+                        const c = (v.color || '').trim();
+                        const s = (v.size || '').trim();
+                        if (filterColor && c.toLowerCase() !== filterColor.toLowerCase()) return false;
+                        if (filterSize && s.toLowerCase() !== filterSize.toLowerCase()) return false;
+                        return true;
+                      })
+                      .map((v) => {
                       const key = variantKey(v);
                       const planned = variantEdits[key] ?? v.on_hand_new ?? v.on_hand_current ?? 0;
                       return (

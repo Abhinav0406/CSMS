@@ -99,7 +99,7 @@ export function ProductTable({ initialProducts }: Props) {
     return undefined;
   }
 
-  type Agg = { sku: string; name: string; variant?: string; onHandCurrent: number; onHandNew: number; committed: number; incoming: number; available: number };
+  type Agg = { sku: string; name: string; variant?: string; color?: string | null; size?: string | null; onHandCurrent: number; onHandNew: number; committed: number; incoming: number; available: number };
 
   // Map of one representative product per SKU (used for names/order)
   const sampleBySku = useMemo(() => {
@@ -147,7 +147,7 @@ export function ProductTable({ initialProducts }: Props) {
         const size = (v.size || '').trim();
         const keyVariant = (color || size) ? [color, size].filter(Boolean).join(' / ') : 'Unspecified';
         const k = `${v.sku}__${color}__${size}`;
-        const a = byKey.get(k) || { sku: v.sku, name: sampleBySku.get(v.sku)?.name || v.sku, variant: keyVariant, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0 };
+        const a = byKey.get(k) || { sku: v.sku, name: sampleBySku.get(v.sku)?.name || v.sku, variant: keyVariant, color, size, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0 };
         a.onHandCurrent += Number(v.on_hand_current || 0);
         a.onHandNew += Number(v.on_hand_new || 0);
         a.committed += Number(v.committed || 0);
@@ -167,7 +167,7 @@ export function ProductTable({ initialProducts }: Props) {
         const size = (extractSize(r.rawRow, r.rawHeaders) || '').trim();
         const keyVariant = (color || size) ? [color, size].filter(Boolean).join(' / ') : 'Unspecified';
         const k = `${r.sku}__${color}__${size}`;
-        const a = byKey.get(k) || { sku: r.sku, name: r.name, variant: keyVariant, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0 };
+        const a = byKey.get(k) || { sku: r.sku, name: r.name, variant: keyVariant, color, size, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0 };
         a.onHandCurrent += (typeof r.onHandCurrent === 'number' ? r.onHandCurrent : 0);
         a.onHandNew += r.onHandNew || 0;
         a.committed += r.committed || 0;
@@ -215,28 +215,58 @@ export function ProductTable({ initialProducts }: Props) {
 
   useEffect(() => { setPage(1); }, [query, availability, groupBy]);
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     if (!isEdit) return;
-    const headers = buildExportHeaders(rows);
-    const lines = [headers.join(',')];
-    for (const r of rows) {
-      const record: Record<string, string> = { ...(r.rawRow || {}) };
-      upsert(record, 'On hand (new)', String(r.onHandNew));
-      upsert(record, 'On hand (current)', String(r.onHandCurrent));
-      upsert(record, 'Committed (not editable)', String(r.committed));
-      // Ensure Available reflects latest On hand (new) - Committed
-      const recomputedAvailable = r.onHandNew - r.committed;
-      upsert(record, 'Available (not editable)', String(recomputedAvailable));
-      if (typeof r.incoming === 'number') upsert(record, 'Incoming (not editable)', String(r.incoming));
-      if (typeof r.unavailable === 'number') upsert(record, 'Unavailable (not editable)', String(r.unavailable));
-      if (r.sku) upsert(record, 'SKU', r.sku);
-      if (r.location) upsert(record, 'Location', r.location);
-      if (r.name) upsert(record, 'Title', r.name);
-      if (r.handle) upsert(record, 'Handle', r.handle);
-      const rowValues = headers.map((h) => escapeCsv(record[h] ?? ''));
-      lines.push(rowValues.join(','));
-    }
-    downloadCsv(lines.join('\n'), 'csms-products-export.csv');
+    try {
+      // Prefer exporting from product_variants (exact variant rows)
+      if (supabase) {
+        const { data, error } = await supabase.from('product_variants').select('*');
+        if (!error && data && data.length > 0) {
+          const headers = buildVariantExportHeaders();
+          const lines: string[] = [headers.join(',')];
+          for (const v of data as any[]) {
+            const raw: Record<string, any> = v.raw || {};
+            const record: Record<string, any> = { ...raw };
+            // Ensure critical fields are current
+            record['SKU'] = v['SKU'] || v.sku || raw['SKU'] || '';
+            record['Location'] = v['Location'] || v.location || raw['Location'] || '';
+            record['On hand (current)'] = v.on_hand_current ?? raw['On hand (current)'] ?? 0;
+            record['On hand (new)'] = v.on_hand_new ?? raw['On hand (new)'] ?? 0;
+            record['Committed (not editable)'] = v.committed ?? raw['Committed (not editable)'] ?? 0;
+            record['Incoming (not editable)'] = v.incoming ?? raw['Incoming (not editable)'] ?? 0;
+            record['Unavailable (not editable)'] = v.unavailable ?? raw['Unavailable (not editable)'] ?? 0;
+            // Recompute Available from new - committed
+            const recomputedAvailable = Number(record['On hand (new)'] || 0) - Number(record['Committed (not editable)'] || 0);
+            record['Available (not editable)'] = recomputedAvailable;
+            const rowValues = headers.map((h) => escapeCsv(record[h] ?? ''));
+            lines.push(rowValues.join(','));
+          }
+          downloadCsv(lines.join('\n'), 'csms-variants-export.csv');
+          return;
+        }
+      }
+
+      // Fallback to products rows export (legacy)
+      const headers = buildExportHeaders(rows);
+      const lines = [headers.join(',')];
+      for (const r of rows) {
+        const record: Record<string, string> = { ...(r.rawRow || {}) };
+        upsert(record, 'On hand (new)', String(r.onHandNew));
+        upsert(record, 'On hand (current)', String(r.onHandCurrent));
+        upsert(record, 'Committed (not editable)', String(r.committed));
+        const recomputedAvailable = r.onHandNew - r.committed;
+        upsert(record, 'Available (not editable)', String(recomputedAvailable));
+        if (typeof r.incoming === 'number') upsert(record, 'Incoming (not editable)', String(r.incoming));
+        if (typeof r.unavailable === 'number') upsert(record, 'Unavailable (not editable)', String(r.unavailable));
+        if (r.sku) upsert(record, 'SKU', r.sku);
+        if (r.location) upsert(record, 'Location', r.location);
+        if (r.name) upsert(record, 'Title', r.name);
+        if (r.handle) upsert(record, 'Handle', r.handle);
+        const rowValues = headers.map((h) => escapeCsv(record[h] ?? ''));
+        lines.push(rowValues.join(','));
+      }
+      downloadCsv(lines.join('\n'), 'csms-products-export.csv');
+    } catch {}
   };
 
   const importCsv = async (file: File) => {
@@ -529,6 +559,20 @@ export function ProductTable({ initialProducts }: Props) {
     return ['Handle','Title','SKU','Location','Incoming (not editable)','Unavailable (not editable)','Committed (not editable)','Available (not editable)','On hand (current)','On hand (new)'];
   }
 
+  function buildVariantExportHeaders(): string[] {
+    try {
+      if (typeof window !== 'undefined') {
+        const raw = localStorage.getItem('csms_last_headers');
+        if (raw) {
+          const hdrs = JSON.parse(raw) as string[];
+          if (Array.isArray(hdrs) && hdrs.length > 0) return hdrs;
+        }
+      }
+    } catch {}
+    // Default Shopify header order
+    return ['Handle','Title','Option1 Name','Option1 Value','Option2 Name','Option2 Value','Option3 Name','Option3 Value','SKU','HS Code','COO','Location','Bin name','Incoming (not editable)','Unavailable (not editable)','Committed (not editable)','Available (not editable)','On hand (current)','On hand (new)'];
+  }
+
   return (
     <div className="card overflow-hidden">
       {notice && (
@@ -644,7 +688,7 @@ export function ProductTable({ initialProducts }: Props) {
                   <td className="px-3 py-2 text-sm text-right tabular-nums">{available}</td>
                   <td className="px-3 py-2 text-sm text-center"><span className="tabular-nums">{p.onHandNew}</span></td>
                   <td className="px-3 py-2 text-right">
-                    <Link className="btn-outline text-xs" href={`/product/${encodeURIComponent(p.sku)}`}>View</Link>
+                    <Link className="btn-outline text-xs" href={`/product/${encodeURIComponent(p.sku)}?color=${encodeURIComponent(p.color || '')}&size=${encodeURIComponent(p.size || '')}`}>View</Link>
                   </td>
                 </tr>
               );
