@@ -27,21 +27,21 @@ export function NavBar() {
   return (
     <header className="mb-4 sm:mb-6 border-b border-gray-200 dark:border-gray-700 pb-3 sm:pb-4">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <Link href="/mv" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-          <div className="relative w-15 h-15 sm:w-12 sm:h-12 flex-shrink-0">
-            <Image
-              src="/icons/icon-192x192.png"
-              alt="CSMS Logo"
-              fill
-              className="object-contain"
-              sizes="(max-width: 640px) 40px, 48px"
-            />
-          </div>
-          <span className="text-xl sm:text-2xl font-bold text-brand-700 dark:text-brand-400 hover:text-brand-800 dark:hover:text-brand-300 transition-colors">
-            CSMS
-          </span>
-        </Link>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <Link href="/mv" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+            <div className="relative w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0">
+              <Image
+                src="/icons/icon-192x192.png"
+                alt="CSMS Logo"
+                fill
+                className="object-contain"
+                sizes="(max-width: 640px) 64px, 80px"
+              />
+            </div>
+            <span className="text-xl sm:text-2xl font-bold text-brand-700 dark:text-brand-400 hover:text-brand-800 dark:hover:text-brand-300 transition-colors">
+              CSMS
+            </span>
+          </Link>
           <nav className="hidden sm:flex items-center gap-1">
             <Link 
               href="/mv" 
