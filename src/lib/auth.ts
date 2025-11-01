@@ -10,7 +10,7 @@ export interface AuthUser {
 const SESSION_KEY = 'csms_session_v1';
 
 export async function login(email: string, password: string): Promise<{ user: AuthUser | null; error?: string }> {
-  if (!supabase) return null;
+  if (!supabase) return { user: null, error: 'Supabase not configured' };
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error || !data.user) return { user: null, error: error?.message || 'Invalid credentials' };
   const role = (data.user.app_metadata?.role as UserRole) || 'View';

@@ -73,11 +73,11 @@ export function ProductTable({ initialProducts }: Props) {
   // Load variant rows when grouping by variant, or when app starts (best effort)
   useEffect(() => {
     (async () => {
-      if (groupBy === 'sku' && variantRows.length > 0) return;
+      if (groupBy === 'sku_color' && variantRows.length > 0) return;
       const v = await fetchAllVariants();
       if (v.length > 0) setVariantRows(v);
     })();
-  }, []);
+  }, [groupBy, variantRows.length]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -146,33 +146,6 @@ export function ProductTable({ initialProducts }: Props) {
   }, [rows]);
 
   const aggregated: Agg[] = useMemo(() => {
-    if (groupBy === 'sku') {
-      const bySku = new Map<string, Agg>();
-      const orderBySku = new Map<string, number>();
-      for (const p of rows) {
-        const a = bySku.get(p.sku) || { sku: p.sku, name: p.name, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0 };
-        a.onHandCurrent += (typeof p.onHandCurrent === 'number' ? p.onHandCurrent : 0);
-        a.onHandNew += p.onHandNew;
-        a.committed += p.committed;
-        a.incoming += p.incoming ?? 0;
-        bySku.set(p.sku, a);
-        const ord = Number(((p.rawRow as any)?.['__order']) ?? Infinity);
-        if (Number.isFinite(ord)) {
-          const prev = orderBySku.get(p.sku);
-          if (prev == null || ord < prev) orderBySku.set(p.sku, ord);
-        }
-      }
-      for (const a of bySku.values()) a.available = a.onHandCurrent - a.committed;
-      return Array.from(bySku.values()).sort((x,y)=>{
-        const ox = orderBySku.get(x.sku);
-        const oy = orderBySku.get(y.sku);
-        if (ox != null && oy != null && ox !== oy) return ox - oy;
-        if (ox != null && oy == null) return -1;
-        if (ox == null && oy != null) return 1;
-        return x.sku.localeCompare(y.sku);
-      });
-    }
-
     // Variant rows (Color/Size combined) - group by SKU + Variant only (aggregate across all locations)
     const byKey = new Map<string, Agg>();
     const orderByKey = new Map<string, number>();
