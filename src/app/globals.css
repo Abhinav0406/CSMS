@@ -12,6 +12,7 @@ body { @apply bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100; }
 .btn-outline { @apply btn border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100; }
 .input { @apply w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 dark:focus:ring-brand-400; }
 .card { @apply rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm; }
+a.card { @apply no-underline text-inherit; }
 
 /* Custom select styling */
 select.input {

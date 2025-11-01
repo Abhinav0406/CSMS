@@ -853,29 +853,28 @@ export function ProductTable({ initialProducts }: Props) {
               <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Available</th>
               <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Committed</th>
               <th className="px-2 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">New</th>
-              <th className="px-2 py-2"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
             {data.map((p) => {
               const available = p.onHandCurrent - p.committed;
               const sample = sampleBySku.get(p.sku);
+              const productHref = `/product/${encodeURIComponent(p.sku)}?location=${encodeURIComponent((p as any).location || '')}&color=${encodeURIComponent(p.color || '')}&size=${encodeURIComponent(p.size || '')}`;
               return (
-                <tr key={`${p.sku}__${p.variant || ''}__${page}`} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                  <td className="px-2 py-2">
-                    <Thumb handle={(sample as any)?.handle} url={(sample?.smallImageUrl || sample?.fullImageUrl) as any} name={p.name} />
-                  </td>
-                  <td className="px-2 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{p.name}</td>
-                  <td className="px-2 py-2 text-xs text-gray-700 dark:text-gray-300">{p.sku}</td>
-                  <td className="px-2 py-2 text-xs text-gray-600 dark:text-gray-400">{(p.color && p.color.trim()) || (p.size && p.size.trim()) || '—'}</td>
-                  <td className="px-2 py-2 text-sm text-right tabular-nums font-medium text-gray-900 dark:text-gray-100">{p.onHandCurrent}</td>
-                  <td className="px-2 py-2 text-sm text-right tabular-nums font-semibold text-brand-600 dark:text-brand-400">{available}</td>
-                  <td className="px-2 py-2 text-xs text-right tabular-nums text-gray-600 dark:text-gray-400">{p.committed}</td>
-                  <td className="px-2 py-2 text-sm text-center"><span className="tabular-nums text-gray-700 dark:text-gray-300">{p.onHandNew}</span></td>
-                  <td className="px-2 py-2 text-right">
-                    <Link className="btn-outline text-xs px-2 py-1" href={`/product/${encodeURIComponent(p.sku)}?location=${encodeURIComponent((p as any).location || '')}&color=${encodeURIComponent(p.color || '')}&size=${encodeURIComponent(p.size || '')}`}>View</Link>
-                  </td>
-                </tr>
+                <Link key={`${p.sku}__${p.variant || ''}__${page}`} href={productHref} className="contents">
+                  <tr className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+                    <td className="px-2 py-2 align-middle">
+                      <Thumb handle={(sample as any)?.handle} url={(sample?.smallImageUrl || sample?.fullImageUrl) as any} name={p.name} />
+                    </td>
+                    <td className="px-2 py-2 text-sm font-medium text-gray-900 dark:text-gray-100 align-middle">{p.name}</td>
+                    <td className="px-2 py-2 text-xs text-gray-700 dark:text-gray-300 align-middle">{p.sku}</td>
+                    <td className="px-2 py-2 text-xs text-gray-600 dark:text-gray-400 align-middle">{(p.color && p.color.trim()) || (p.size && p.size.trim()) || '—'}</td>
+                    <td className="px-2 py-2 text-sm text-right tabular-nums font-medium text-gray-900 dark:text-gray-100 align-middle">{p.onHandCurrent}</td>
+                    <td className="px-2 py-2 text-sm text-right tabular-nums font-semibold text-brand-600 dark:text-brand-400 align-middle">{available}</td>
+                    <td className="px-2 py-2 text-xs text-right tabular-nums text-gray-600 dark:text-gray-400 align-middle">{p.committed}</td>
+                    <td className="px-2 py-2 text-sm text-center align-middle"><span className="tabular-nums text-gray-700 dark:text-gray-300">{p.onHandNew}</span></td>
+                  </tr>
+                </Link>
               );
             })}
           </tbody>

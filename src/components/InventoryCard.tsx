@@ -44,7 +44,10 @@ export function InventoryCard(props: InventoryCardProps) {
   const href = `/product/${encodeURIComponent(props.sku)}?location=${encodeURIComponent(props.location || '')}&color=${encodeURIComponent(props.color || '')}&size=${encodeURIComponent(props.size || '')}`;
 
   return (
-    <div className="card p-2 sm:p-3">
+    <Link 
+      href={href} 
+      className="card p-2 sm:p-3 hover:shadow-md active:scale-[0.98] transition-all cursor-pointer block no-underline w-full"
+    >
       <div className="flex gap-2 sm:gap-3">
         <div className="flex-shrink-0">
           <div className="relative w-16 h-16 sm:w-24 sm:h-24 rounded overflow-hidden bg-gray-100 dark:bg-gray-700">
@@ -53,7 +56,7 @@ export function InventoryCard(props: InventoryCardProps) {
               alt={props.name}
               fill
               sizes="(max-width: 640px) 64px, 96px"
-              className="object-cover"
+              className="object-cover pointer-events-none"
               onError={() => setSrc(fallback)}
             />
           </div>
@@ -83,12 +86,12 @@ export function InventoryCard(props: InventoryCardProps) {
               </div>
             </div>
             <div className="mt-2">
-              <Link href={href} className="text-xs text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 underline">View details</Link>
+              <span className="text-xs text-brand-600 dark:text-brand-400 font-medium">View details →</span>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
 
