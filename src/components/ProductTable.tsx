@@ -697,7 +697,7 @@ export function ProductTable({ initialProducts }: Props) {
         <div className="flex flex-wrap items-center gap-2">
           {/* Prefix Dropdown - Compact */}
           <div className="relative" ref={prefixDropdownRef}>
-            <button
+              <button
               type="button"
               className="input text-xs px-2 py-1.5 w-24 sm:w-28 font-medium flex items-center justify-between cursor-pointer hover:border-brand-400 dark:hover:border-brand-500"
               onClick={() => setPrefixDropdownOpen(!prefixDropdownOpen)}
@@ -720,13 +720,13 @@ export function ProductTable({ initialProducts }: Props) {
                   className={`w-full px-2 py-1.5 text-xs text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
                     selectedPrefix === '' ? 'bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-300 font-medium' : 'text-gray-700 dark:text-gray-300'
                   }`}
-                  onClick={() => {
+                onClick={() => {
                     setSelectedPrefix('');
                     setPrefixDropdownOpen(false);
-                  }}
-                >
+                }}
+              >
                   All
-                </button>
+              </button>
                 {availablePrefixes.map((prefix) => (
                   <button
                     key={prefix}
@@ -743,8 +743,8 @@ export function ProductTable({ initialProducts }: Props) {
                   </button>
                 ))}
               </div>
-            )}
-          </div>
+          )}
+        </div>
           {/* Search Input - Compact */}
           <input
             type="text"
@@ -810,9 +810,9 @@ export function ProductTable({ initialProducts }: Props) {
                 >
                   Out of stock
                 </button>
-              </div>
+        </div>
             )}
-          </div>
+      </div>
         </div>
       </div>
       {/* Mobile cards (≤640px) */}
@@ -864,8 +864,8 @@ export function ProductTable({ initialProducts }: Props) {
                 <Link key={`${p.sku}__${p.variant || ''}__${page}`} href={productHref} className="contents">
                   <tr className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
                     <td className="px-2 py-2 align-middle">
-                      <Thumb handle={(sample as any)?.handle} url={(sample?.smallImageUrl || sample?.fullImageUrl) as any} name={p.name} />
-                    </td>
+                    <Thumb handle={(sample as any)?.handle} url={(sample?.smallImageUrl || sample?.fullImageUrl) as any} name={p.name} />
+                  </td>
                     <td className="px-2 py-2 text-sm font-medium text-gray-900 dark:text-gray-100 align-middle">{p.name}</td>
                     <td className="px-2 py-2 text-xs text-gray-700 dark:text-gray-300 align-middle">{p.sku}</td>
                     <td className="px-2 py-2 text-xs text-gray-600 dark:text-gray-400 align-middle">{(p.color && p.color.trim()) || (p.size && p.size.trim()) || '—'}</td>
@@ -873,7 +873,7 @@ export function ProductTable({ initialProducts }: Props) {
                     <td className="px-2 py-2 text-sm text-right tabular-nums font-semibold text-brand-600 dark:text-brand-400 align-middle">{available}</td>
                     <td className="px-2 py-2 text-xs text-right tabular-nums text-gray-600 dark:text-gray-400 align-middle">{p.committed}</td>
                     <td className="px-2 py-2 text-sm text-center align-middle"><span className="tabular-nums text-gray-700 dark:text-gray-300">{p.onHandNew}</span></td>
-                  </tr>
+                </tr>
                 </Link>
               );
             })}

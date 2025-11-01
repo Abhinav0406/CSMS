@@ -29,6 +29,11 @@ export default function ProductDetailPage() {
   const [addQty, setAddQty] = useState<number>(0);
   const [variants, setVariants] = useState<Array<{ id?: string; sku: string; location: string; color?: string | null; size?: string | null; on_hand_current: number; on_hand_new: number }>>([]);
   const [variantEdits, setVariantEdits] = useState<Record<string, number>>({});
+  const [showLocationModal, setShowLocationModal] = useState<boolean>(false);
+  const [selectedLocation, setSelectedLocation] = useState<string>('');
+  const [locationQty, setLocationQty] = useState<number>(0);
+  const [showQtyModal, setShowQtyModal] = useState<boolean>(false);
+  const [recentChanges, setRecentChanges] = useState<Array<{ location: string; qty: number; timestamp: Date }>>([]);
 
   useEffect(() => {
     (async () => {
@@ -80,9 +85,15 @@ export default function ProductDetailPage() {
           .select('id, sku, location, color, size, on_hand_current, on_hand_new')
           .eq('sku', sku);
         if (!error && Array.isArray(data)) {
-          setVariants(data as any);
+          // Filter out entries where both color and size are empty (not real variants)
+          const validVariants = (data as any[]).filter(v => {
+            const c = (v.color || '').trim();
+            const s = (v.size || '').trim();
+            return c !== '' || s !== '';
+          });
+          setVariants(validVariants);
           const edits: Record<string, number> = {};
-          for (const v of data as any[]) {
+          for (const v of validVariants) {
             const key = variantKey(v);
             edits[key] = Number.isFinite(v.on_hand_new) ? v.on_hand_new : v.on_hand_current || 0;
           }
@@ -140,8 +151,41 @@ export default function ProductDetailPage() {
   const cardsCommitted = (filterColor || filterSize) ? variantCommitted : product.committed;
   const available = (cardsOnHandCurrent - cardsCommitted);
 
+  const handleAddStock = async () => {
+    if (locationQty > 0 && selectedLocation) {
+      const idx = locations.findIndex(l => l.location === selectedLocation);
+      if (idx >= 0) {
+        const nextEntries = locations.map((r, i) => ({
+          loc: r.location,
+          add: i === idx ? (entries[i]?.add || 0) + locationQty : (entries[i]?.add || 0),
+        }));
+        setEntries(nextEntries);
+        
+        // Track recent changes
+        setRecentChanges(prev => {
+          const newChanges = [{ location: selectedLocation, qty: locationQty, timestamp: new Date() }, ...prev];
+          return newChanges.slice(0, 10); // Keep only last 10
+        });
+        
+        // Check if all locations have stock added
+        const allLocationsHaveStock = nextEntries.every(e => e.add > 0);
+        
+        setShowQtyModal(false);
+        setLocationQty(0);
+        setSelectedLocation('');
+        
+        // If all locations have stock, close modal completely. Otherwise, show location selector
+        if (allLocationsHaveStock) {
+          setShowLocationModal(false);
+        } else {
+          setShowLocationModal(true);
+        }
+      }
+    }
+  };
+
   return (
-    <div className="space-y-4">
+    <div className={`space-y-4 ${variants.length === 0 ? 'pb-24 sm:pb-4' : ''}`}>
       <NavBar />
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="card p-3 sm:p-4 md:col-span-1">
@@ -167,66 +211,23 @@ export default function ProductDetailPage() {
           </div>
         </div>
 
-        <div className="card p-3 sm:p-4 md:col-span-2 space-y-3 sm:space-y-4">
-          <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100">Inventory</h3>
-          {/* Sticky summary for mobile */}
-          <div className="block md:hidden sticky top-[56px] z-10 bg-white/95 dark:bg-gray-800/95 backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:supports-[backdrop-filter]:bg-gray-800/70 border border-gray-200 dark:border-gray-700 rounded p-2">
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <div className="text-[10px] text-gray-500 dark:text-gray-400">Stock</div>
-                <div className="text-sm font-semibold tabular-nums text-gray-900 dark:text-gray-100">{cardsOnHandCurrent}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-gray-500 dark:text-gray-400">Available</div>
-                <div className="text-sm font-semibold tabular-nums text-brand-600 dark:text-brand-400">{available}</div>
-              </div>
-            </div>
+        <div className="card p-3 sm:p-4 md:col-span-2 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Inventory</h3>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+          
+          {/* Compact grid - 4 metrics in 2x2 */}
+          <div className="grid grid-cols-2 gap-2">
             <Breakdown label="Stock" value={cardsOnHandCurrent} />
+            <Breakdown label="Available" value={available} />
             <Breakdown label="New" value={cardsOnHandNew} highlight />
             <Breakdown label="Committed" value={cardsCommitted} />
-            <Breakdown label="Available" value={available} />
           </div>
 
-          <div className="rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-2 sm:p-3 text-[10px] sm:text-xs text-gray-600 dark:text-gray-400 space-y-1">
-            <div><span className="font-medium">Stock:</span> Total units physically present.</div>
-            <div><span className="font-medium">New:</span> Planned total after adjustments.</div>
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            {isEdit && (
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={0}
-                  className="input w-40"
-                  placeholder="Add quantity"
-                  value={Number.isFinite(addQty) ? addQty : 0}
-                  onChange={(e) => setAddQty(Math.max(0, Math.floor(Number(e.target.value || 0))))}
-                />
-                <button
-                  className="btn-primary"
-                  onClick={async () => {
-                    if (!locations.length) return;
-                    const total = Number.isFinite(addQty) ? addQty : 0;
-                    const n = locations.length;
-                    const base = Math.floor(total / n);
-                    let remainder = total % n;
-                    const nextEntries = locations.map((r, i) => ({
-                      loc: r.location,
-                      add: base + (remainder-- > 0 ? 1 : 0),
-                    }));
-                    setEntries(nextEntries);
-                  }}
-                >
-                  Add Stock
-                </button>
-              </div>
-            )}
+          <div className={`grid grid-cols-2 gap-2 sm:flex sm:flex-wrap ${variants.length === 0 ? 'hidden sm:flex' : ''}`}>
             {isEdit && (
               <button
-                className="btn-outline"
+                className="btn-outline text-sm"
                 onClick={async () => {
                   // If variant is filtered, commit variant-level new to current, and sync products totals
                   if (filterColor || filterSize) {
@@ -330,13 +331,68 @@ export default function ProductDetailPage() {
                 Set On hand (new) = current
               </button>
             )}
-            <Link href="/mv" className="btn-outline">Back to Master View</Link>
+            {isEdit && (
+              <button
+                className="btn-primary text-sm"
+                onClick={() => {
+                  setShowLocationModal(true);
+                }}
+              >
+                Add Stock
+              </button>
+            )}
+            <Link href="/mv" className="btn-outline text-sm">Back to Master View</Link>
           </div>
+
+          {/* Recent Changes Log */}
+          {recentChanges.length > 0 && (
+            <div className="mt-4">
+              <h4 className="mb-2 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Recent Changes</h4>
+              <div className="bg-gray-50 dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700 p-3">
+                <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                  {recentChanges.map((change, idx) => (
+                    <div key={idx} className="text-xs flex items-center justify-between py-1 border-b border-gray-200 dark:border-gray-700 last:border-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-green-600 dark:text-green-400 font-medium">+{change.qty}</span>
+                        <span className="text-gray-600 dark:text-gray-400">to {change.location}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-500 dark:text-gray-500 text-[10px]">
+                          {change.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        {isEdit && (
+                          <button
+                            onClick={() => {
+                              const idx = locations.findIndex(l => l.location === change.location);
+                              if (idx >= 0) {
+                                const nextEntries = entries.map((e, i) => ({
+                                  loc: e.loc,
+                                  add: i === idx ? Math.max(0, (e.add || 0) - change.qty) : e.add,
+                                }));
+                                setEntries(nextEntries);
+                                setRecentChanges(prev => prev.filter((_, i) => i !== idx));
+                              }
+                            }}
+                            className="text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                            title="Undo this change"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Hide per-location totals when a specific variant is selected to avoid confusion */}
           {!filterColor && !filterSize && (
-            <div className="mt-4">
-              <h4 className="mb-2 text-sm font-medium text-gray-900 dark:text-gray-100">Per-location adjustment</h4>
+            <div className="mt-3">
+              <h4 className="mb-2 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Locations</h4>
               <PerLocationEditor
                 rows={locations}
                 entries={entries}
@@ -352,21 +408,21 @@ export default function ProductDetailPage() {
           )}
 
           {/* Variant grid (Color/Size per location) */}
-              {variants.length > 0 && (
-            <div className="mt-6">
-              <h4 className="mb-2 text-sm font-medium text-gray-900 dark:text-gray-100">Per-variant adjustment</h4>
+          {variants.length > 0 && (
+            <div className="mt-4">
+              <h4 className="mb-2 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Variants</h4>
               {(filterColor || filterSize) && (
-                <div className="mb-2 text-xs text-gray-600 dark:text-gray-400">Showing variant: {filterColor || '—'} {filterColor && filterSize ? '•' : ''} {filterSize || ''}</div>
+                <div className="mb-2 text-xs text-gray-600 dark:text-gray-400">Showing: {filterColor || '—'} {filterColor && filterSize ? '•' : ''} {filterSize || ''}</div>
               )}
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                   <thead className="bg-gray-50 dark:bg-gray-800">
                     <tr>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Color</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Size</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Location</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">On hand (current)</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">On hand (new)</th>
+                      <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Color</th>
+                      <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Size</th>
+                      <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Location</th>
+                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Current</th>
+                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">New</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
@@ -382,17 +438,17 @@ export default function ProductDetailPage() {
                       const key = variantKey(v);
                       const planned = variantEdits[key] ?? v.on_hand_new ?? v.on_hand_current ?? 0;
                       return (
-                        <tr key={key}>
-                          <td className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{v.color || '—'}</td>
-                          <td className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{v.size || '—'}</td>
-                          <td className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{v.location}</td>
-                          <td className="px-3 py-2 text-sm text-right tabular-nums text-gray-900 dark:text-gray-100">{v.on_hand_current || 0}</td>
-                          <td className="px-3 py-2 text-sm text-right">
+                        <tr key={key} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                          <td className="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300">{v.color || '—'}</td>
+                          <td className="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300">{v.size || '—'}</td>
+                          <td className="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300">{v.location}</td>
+                          <td className="px-2 py-1.5 text-xs text-right tabular-nums text-gray-900 dark:text-gray-100">{v.on_hand_current || 0}</td>
+                          <td className="px-2 py-1.5 text-xs text-right">
                             {isEdit ? (
                               <input
                                 type="number"
                                 min={0}
-                                className="input w-24 text-right"
+                                className="input w-20 text-right py-1 text-xs"
                                 value={planned}
                                 onChange={(e) => {
                                   const n = Math.max(0, Math.floor(Number(e.target.value || 0)));
@@ -410,9 +466,9 @@ export default function ProductDetailPage() {
                 </table>
               </div>
               {isEdit && (
-                <div className="mt-3 flex items-center gap-2">
+                <div className="mt-2 flex items-center gap-2">
                   <button
-                    className="btn-primary"
+                    className="btn-primary text-xs py-1.5 px-3"
                     onClick={async () => {
                       if (!supabase) return;
                       for (const v of variants) {
@@ -438,7 +494,7 @@ export default function ProductDetailPage() {
                       } catch {}
                     }}
                   >
-                    Save per-variant
+                    Save
                   </button>
                 </div>
               )}
@@ -446,6 +502,177 @@ export default function ProductDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Mobile floating buttons when no variants */}
+      {variants.length === 0 && (
+        <div className="fixed bottom-16 left-4 right-4 sm:hidden z-40 flex gap-2">
+            {isEdit && (
+              <button
+                className="btn-outline text-xs px-2 py-1.5 flex-1 shadow-lg"
+                onClick={async () => {
+                  const updatedRows: Product[] = [];
+                  for (const r of locations) {
+                    const delta = r.onHandNew || 0;
+                    const newCurrent = (r.onHandCurrent || 0) + delta;
+                    try {
+                      await updateOnHandCurrent(r.sku, r.location, newCurrent);
+                      await updateOnHandNew(r.sku, r.location, 0);
+                    } catch {}
+                    updatedRows.push({ ...r, onHandCurrent: newCurrent, onHandNew: 0 });
+                  }
+                  setLocations(updatedRows);
+                  const combined = combine(updatedRows);
+                  setProduct(combined);
+                  try {
+                    const raw = localStorage.getItem(STORAGE_KEY);
+                    if (raw) {
+                      const list = JSON.parse(raw) as Product[];
+                      const nextList = list.map((p) => {
+                        if (p.sku !== product.sku) return p;
+                        const match = updatedRows.find((r) => r.sku === p.sku && r.location === p.location);
+                        return match ? { ...p, onHandCurrent: match.onHandCurrent, onHandNew: 0 } : p;
+                      });
+                      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
+                    }
+                  } catch {}
+                }}
+              >
+                Set On hand (new) = current
+              </button>
+            )}
+            {isEdit && (
+              <button
+                className="btn-primary text-xs px-3 py-1.5 shadow-lg"
+                onClick={() => {
+                  setShowLocationModal(true);
+                }}
+              >
+                Add Stock
+              </button>
+            )}
+            <Link href="/mv" className="btn-outline text-xs px-2 py-1.5 shadow-lg">Back</Link>
+        </div>
+      )}
+
+      {/* Location Selection Modal */}
+      {showLocationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowLocationModal(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Select Location</h3>
+              <button
+                onClick={() => setShowLocationModal(false)}
+                className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {locations.map((loc, idx) => {
+                const add = entries[idx]?.add || 0;
+                const newValue = add || loc.onHandNew || 0;
+                return (
+                  <button
+                    key={loc.location}
+                    onClick={() => {
+                      setSelectedLocation(loc.location);
+                      setShowLocationModal(false);
+                      setShowQtyModal(true);
+                    }}
+                    className="w-full text-left px-4 py-3 rounded-md border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    <div className="font-medium text-gray-900 dark:text-gray-100">{loc.location}</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">Current: {loc.onHandCurrent} | New: {newValue}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quantity Input Modal */}
+      {showQtyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowQtyModal(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Add Stock to {selectedLocation}</h3>
+              <button
+                onClick={() => setShowQtyModal(false)}
+                className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Quantity to Add
+                </label>
+                {/* Quick quantity buttons */}
+                <div className="grid grid-cols-3 gap-2 mb-2">
+                  {[10, 50, 100].map((qty) => (
+                    <button
+                      key={qty}
+                      onClick={() => setLocationQty(qty)}
+                      className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                        locationQty === qty
+                          ? 'bg-brand-600 text-white'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                      }`}
+                    >
+                      {qty}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={locationQty === 0 ? '' : locationQty}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') {
+                      setLocationQty(0);
+                    } else {
+                      const num = parseInt(val, 10);
+                      if (!isNaN(num) && num >= 0) {
+                        setLocationQty(num);
+                      }
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && locationQty > 0) {
+                      handleAddStock();
+                    }
+                  }}
+                  className="input w-full"
+                  placeholder="Or enter custom quantity"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowQtyModal(false)}
+                  className="btn-outline flex-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddStock}
+                  disabled={!locationQty || locationQty === 0}
+                  className="btn-primary flex-1"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -457,10 +684,10 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
       <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
         <thead className="bg-gray-50 dark:bg-gray-800">
           <tr>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Location</th>
-            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">On hand (current)</th>
-            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">On hand (new, planned)</th>
-            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Add qty</th>
+            <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Location</th>
+            <th className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Current</th>
+            <th className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">New</th>
+            <th className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Add</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
@@ -468,16 +695,16 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
             const add = entries[idx]?.add ?? 0;
             const planned = add || r.onHandNew || 0;
             return (
-              <tr key={r.location}>
-                <td className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{r.location}</td>
-                <td className="px-3 py-2 text-sm text-right tabular-nums text-gray-900 dark:text-gray-100">{typeof r.onHandCurrent === 'number' ? r.onHandCurrent : 0}</td>
-                <td className="px-3 py-2 text-sm text-right tabular-nums text-gray-900 dark:text-gray-100">{planned}</td>
-                <td className="px-3 py-2 text-sm text-right">
+              <tr key={r.location} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                <td className="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300">{r.location}</td>
+                <td className="px-2 py-1.5 text-xs text-right tabular-nums text-gray-900 dark:text-gray-100">{typeof r.onHandCurrent === 'number' ? r.onHandCurrent : 0}</td>
+                <td className="px-2 py-1.5 text-xs text-right tabular-nums text-gray-900 dark:text-gray-100">{planned}</td>
+                <td className="px-2 py-1.5 text-xs text-right">
                   {isEdit ? (
-                    <div className="inline-flex items-center gap-1">
+                    <div className="inline-flex items-center gap-0.5">
                       <button
                         type="button"
-                        className="btn-outline h-8 w-8 p-0"
+                        className="btn-outline h-6 w-6 p-0 text-xs"
                         onClick={(e) => {
                           e.preventDefault();
                           setEntries((prev) => prev.map((p, i) => (i === idx ? { ...p, add: Math.max(0, (p.add || 0) - 1) } : p)));
@@ -489,7 +716,7 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
                         role="textbox"
                         contentEditable
                         suppressContentEditableWarning
-                        className="input w-24 text-right"
+                        className="input w-16 text-right text-xs py-0.5"
                         onKeyDown={(e) => {
                           const allowed = ['Backspace','Delete','ArrowLeft','ArrowRight','Tab'];
                           if (/^[0-9]$/.test(e.key) || allowed.includes(e.key)) return;
@@ -504,7 +731,7 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
                       >{add}</div>
                       <button
                         type="button"
-                        className="btn-outline h-8 w-8 p-0"
+                        className="btn-outline h-6 w-6 p-0 text-xs"
                         onClick={(e) => {
                           e.preventDefault();
                           setEntries((prev) => prev.map((p, i) => (i === idx ? { ...p, add: (p.add || 0) + 1 } : p)));
@@ -514,7 +741,7 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
                       </button>
                     </div>
                   ) : (
-                    <div className="text-sm text-gray-500 dark:text-gray-400">—</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">—</div>
                   )}
                 </td>
               </tr>
@@ -523,9 +750,9 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
         </tbody>
       </table>
       {isEdit && (
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2">
           <button
-            className="btn-primary"
+            className="btn-primary text-xs py-1.5 px-3"
             onClick={async () => {
               const updated: Product[] = [];
               for (let i = 0; i < rows.length; i++) {
@@ -553,7 +780,7 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
               onSaved(updated);
             }}
           >
-            Save per-location
+            Save
           </button>
         </div>
       )}
@@ -584,9 +811,9 @@ function FetchImageByHandle({ handle, onFound }: { handle?: string; onFound: (ur
 
 function Breakdown({ label, value, highlight }: { label: string; value: number; highlight?: boolean }) {
   return (
-    <div className={`rounded border p-3 ${highlight ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700'}`}>
-      <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
-      <div className="text-lg font-semibold tabular-nums text-gray-900 dark:text-gray-100">{value}</div>
+    <div className={`rounded border p-2 ${highlight ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700'}`}>
+      <div className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</div>
+      <div className="text-xl font-bold tabular-nums text-gray-900 dark:text-gray-100 mt-0.5">{value}</div>
     </div>
   );
 }
