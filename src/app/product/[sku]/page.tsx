@@ -46,19 +46,6 @@ export default function ProductDetailPage() {
     })();
   }, [router]);
 
-  // Load from localStorage first (any location)
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const list = JSON.parse(raw) as Product[];
-        const found = list.find((p) => p.sku === sku);
-        if (found) setProduct(found);
-      }
-    } catch {}
-  }, [sku]);
-
   // Fetch all locations for this SKU
   const [locations, setLocations] = useState<Product[]>([]);
   const [entries, setEntries] = useState<{ loc: string; add: number }[]>([]);
@@ -71,6 +58,18 @@ export default function ProductDetailPage() {
         const combined = combine(remote);
         setProduct(combined);
         setEntries(remote.map((r) => ({ loc: r.location, add: 0 })));
+      } else {
+        // Fallback to localStorage if no remote data
+        if (typeof window !== 'undefined') {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (raw) {
+              const list = JSON.parse(raw) as Product[];
+              const found = list.find((p) => p.sku === sku);
+              if (found) setProduct(found);
+            }
+          } catch {}
+        }
       }
     })();
   }, [sku]);
@@ -207,7 +206,6 @@ export default function ProductDetailPage() {
           <div className="mt-3 sm:mt-4">
             <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-gray-100">{product.name}</h2>
             <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">SKU: {product.sku}</div>
-            <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">Location: {product.location}</div>
           </div>
         </div>
 

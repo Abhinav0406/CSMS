@@ -18,7 +18,10 @@ export function NavBar() {
     (async () => {
       const session = await getCurrentSession();
       if (session) {
-        setUsername(session.email);
+        // Extract just the name part before @ from email
+        const email = session.email;
+        const displayName = email?.split('@')[0] || email;
+        setUsername(displayName);
         setRole(session.role);
       }
     })();
