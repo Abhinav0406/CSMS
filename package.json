@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "set-role": "node scripts/set-role.mjs"
+    "set-role": "node scripts/set-role.mjs",
+    "generate-icons": "node scripts/resize-icons.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.3",
@@ -24,8 +25,8 @@
     "eslint": "^8.57.0",
     "eslint-config-next": "^14.2.5",
     "postcss": "^8.4.41",
+    "sharp": "^0.34.4",
     "tailwindcss": "^3.4.10",
     "typescript": "^5.5.4"
   }
 }
-

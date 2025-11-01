@@ -231,7 +231,14 @@ export default function ProductDetailPage() {
                   // If variant is filtered, commit variant-level new to current, and sync products totals
                   if (filterColor || filterSize) {
                     const deltasByLoc = new Map<string, number>();
-                    for (const v of filteredVariants) {
+                    const updatedVariants = [...variants];
+                    for (let i = 0; i < updatedVariants.length; i++) {
+                      const v = updatedVariants[i];
+                      const c = (v.color || '').trim();
+                      const s = (v.size || '').trim();
+                      if (filterColor && c.toLowerCase() !== filterColor.toLowerCase()) continue;
+                      if (filterSize && s.toLowerCase() !== filterSize.toLowerCase()) continue;
+                      
                       const delta = Number(v.on_hand_new || 0);
                       const newCurrent = Number(v.on_hand_current || 0) + delta;
                       try {
@@ -243,8 +250,18 @@ export default function ProductDetailPage() {
                           .eq('color', v.color ?? '')
                           .eq('size', v.size ?? '');
                       } catch {}
+                      updatedVariants[i] = { ...v, on_hand_current: newCurrent, on_hand_new: 0 };
                       deltasByLoc.set(v.location, (deltasByLoc.get(v.location) || 0) + delta);
                     }
+                    setVariants(updatedVariants);
+                    // Update variantEdits state
+                    const updatedEdits = { ...variantEdits };
+                    updatedVariants.forEach(v => {
+                      const key = variantKey(v);
+                      updatedEdits[key] = 0;
+                    });
+                    setVariantEdits(updatedEdits);
+                    
                     // Update products per location using accumulated deltas
                     const updated: Product[] = [];
                     for (const r of locations) {
@@ -277,6 +294,25 @@ export default function ProductDetailPage() {
                   setLocations(updatedRows);
                   const combined = combine(updatedRows);
                   setProduct(combined);
+                  
+                  // Also update variants if they exist
+                  if (variants.length > 0) {
+                    const updatedVariants = variants.map(v => {
+                      const locMatch = updatedRows.find(r => r.location === v.location);
+                      if (locMatch) {
+                        return { ...v, on_hand_current: locMatch.onHandCurrent as number, on_hand_new: 0 };
+                      }
+                      return v;
+                    });
+                    setVariants(updatedVariants);
+                    // Update variantEdits state
+                    const updatedEdits = { ...variantEdits };
+                    updatedVariants.forEach(v => {
+                      const key = variantKey(v);
+                      updatedEdits[key] = 0;
+                    });
+                    setVariantEdits(updatedEdits);
+                  }
                   try {
                     const raw = localStorage.getItem(STORAGE_KEY);
                     if (raw) {

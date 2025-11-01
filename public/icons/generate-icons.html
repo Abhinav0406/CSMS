@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>PWA Icon Generator</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .icon-preview {
+      width: 512px;
+      height: 512px;
+      background: linear-gradient(135deg, #3c55f3 0%, #4f73ff 100%);
+      border-radius: 20%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 120px;
+      font-weight: bold;
+      margin: 20px auto;
+      box-shadow: 0 8px 24px rgba(60, 85, 243, 0.3);
+    }
+    .instructions {
+      background: #f3f4f6;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+    button {
+      background: #3c55f3;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background: #2f41d0;
+    }
+    canvas {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>CSMS PWA Icon Generator</h1>
+  <div class="icon-preview">CSMS</div>
+  <div class="instructions">
+    <p><strong>Instructions:</strong></p>
+    <p>1. Right-click on the icon above and "Save image as..."</p>
+    <p>2. Or use this page to generate all required sizes programmatically</p>
+    <p>3. Save icons to: <code>public/icons/</code></p>
+  </div>
+  <canvas id="canvas" width="512" height="512"></canvas>
+  <button onclick="generateIcons()">Generate All Icons</button>
+  <div id="results"></div>
+
+  <script>
+    const sizes = [72, 96, 128, 144, 152, 192, 384, 512];
+    
+    function generateIcons() {
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      // Create gradient background
+      const gradient = ctx.createLinearGradient(0, 0, 512, 512);
+      gradient.addColorStop(0, '#3c55f3');
+      gradient.addColorStop(1, '#4f73ff');
+      
+      ctx.fillStyle = gradient;
+      ctx.roundRect(0, 0, 512, 512, 102);
+      ctx.fill();
+      
+      // Add text
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 120px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('CSMS', 256, 256);
+      
+      // Generate downloads
+      const results = document.getElementById('results');
+      results.innerHTML = '<h3>Generated Icons:</h3>';
+      
+      sizes.forEach(size => {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = size;
+        tempCanvas.height = size;
+        const tempCtx = tempCanvas.getContext('2d');
+        
+        // Draw scaled version
+        const gradient = tempCtx.createLinearGradient(0, 0, size, size);
+        gradient.addColorStop(0, '#3c55f3');
+        gradient.addColorStop(1, '#4f73ff');
+        
+        tempCtx.fillStyle = gradient;
+        tempCtx.roundRect(0, 0, size, size, size * 0.2);
+        tempCtx.fill();
+        
+        tempCtx.fillStyle = 'white';
+        tempCtx.font = `bold ${size * 0.23}px Arial`;
+        tempCtx.textAlign = 'center';
+        tempCtx.textBaseline = 'middle';
+        tempCtx.fillText('CSMS', size / 2, size / 2);
+        
+        // Create download link
+        tempCanvas.toBlob(blob => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `icon-${size}x${size}.png`;
+          a.textContent = `Download ${size}x${size}`;
+          a.style.display = 'block';
+          a.style.margin = '5px 0';
+          results.appendChild(a);
+        });
+      });
+    }
+    
+    // Polyfill for roundRect if needed
+    if (!CanvasRenderingContext2D.prototype.roundRect) {
+      CanvasRenderingContext2D.prototype.roundRect = function(x, y, width, height, radius) {
+        this.beginPath();
+        this.moveTo(x + radius, y);
+        this.lineTo(x + width - radius, y);
+        this.quadraticCurveTo(x + width, y, x + width, y + radius);
+        this.lineTo(x + width, y + height - radius);
+        this.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        this.lineTo(x + radius, y + height);
+        this.quadraticCurveTo(x, y + height, x, y + height - radius);
+        this.lineTo(x, y + radius);
+        this.quadraticCurveTo(x, y, x + radius, y);
+        this.closePath();
+      };
+    }
+  </script>
+</body>
+</html>
+
