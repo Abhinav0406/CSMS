@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { fetchProductBySkuLocation, fetchProductsBySku } from '@/lib/productsApi';
 import { updateOnHandNew, updateOnHandCurrent } from '@/lib/productsApi';
 import { supabase } from '@/lib/supabaseClient';
+import { getCachedImageUrl, fetchAndCacheImageUrl } from '@/lib/imageCache';
 
 export default function ProductDetailPage() {
   const router = useRouter();
@@ -110,8 +111,8 @@ export default function ProductDetailPage() {
       <div className="space-y-4">
         <NavBar />
         <div className="card p-6">
-          <div className="text-sm text-gray-600">Product not found. Load data via import or connect to backend.</div>
-          <div className="mt-3 rounded bg-gray-50 p-3 text-xs text-gray-600">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Product not found. Load data via import or connect to backend.</div>
+          <div className="mt-3 rounded bg-gray-50 dark:bg-gray-800/50 p-3 text-xs text-gray-600 dark:text-gray-400">
             <div>Diagnostics</div>
             <div>SKU: <span className="font-mono">{sku || '(empty)'}</span></div>
             <div>Location (query): <span className="font-mono">{location || '(none)'}</span></div>
@@ -143,8 +144,8 @@ export default function ProductDetailPage() {
     <div className="space-y-4">
       <NavBar />
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="card p-4 md:col-span-1">
-          <ImageWithFallback src={product.fullImageUrl} alt={product.name} width={800} height={600} className="w-full h-auto rounded" />
+        <div className="card p-3 sm:p-4 md:col-span-1">
+          <ImageWithFallback src={product.fullImageUrl} alt={product.name} width={800} height={600} className="w-full max-w-xs mx-auto sm:max-w-none h-auto rounded" />
           {!product.fullImageUrl && (
             <FetchImageByHandle handle={(product as any).handle} onFound={(url) => {
               if (!url) return;
@@ -159,29 +160,38 @@ export default function ProductDetailPage() {
               } catch {}
             }} />
           )}
-          <div className="mt-4">
-            <h2 className="text-lg font-semibold">{product.name}</h2>
-            <div className="text-sm text-gray-600">SKU: {product.sku}</div>
-            <div className="text-sm text-gray-600">Location: {product.location}</div>
+          <div className="mt-3 sm:mt-4">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-gray-100">{product.name}</h2>
+            <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">SKU: {product.sku}</div>
+            <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">Location: {product.location}</div>
           </div>
         </div>
 
-        <div className="card p-4 md:col-span-2 space-y-4">
-          <h3 className="text-base font-semibold">Inventory</h3>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-            <Breakdown label="On hand (current)" value={cardsOnHandCurrent} />
-            <Breakdown label="On hand (new, planned)" value={cardsOnHandNew} highlight />
+        <div className="card p-3 sm:p-4 md:col-span-2 space-y-3 sm:space-y-4">
+          <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100">Inventory</h3>
+          {/* Sticky summary for mobile */}
+          <div className="block md:hidden sticky top-[56px] z-10 bg-white/95 dark:bg-gray-800/95 backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:supports-[backdrop-filter]:bg-gray-800/70 border border-gray-200 dark:border-gray-700 rounded p-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">Stock</div>
+                <div className="text-sm font-semibold tabular-nums text-gray-900 dark:text-gray-100">{cardsOnHandCurrent}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">Available</div>
+                <div className="text-sm font-semibold tabular-nums text-brand-600 dark:text-brand-400">{available}</div>
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+            <Breakdown label="Stock" value={cardsOnHandCurrent} />
+            <Breakdown label="New" value={cardsOnHandNew} highlight />
             <Breakdown label="Committed" value={cardsCommitted} />
             <Breakdown label="Available" value={available} />
           </div>
 
-          <div className="rounded border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700 space-y-2">
-            <div>
-              <span className="font-semibold">On hand (current):</span> Total units physically present at this location right now (sellable + reserved).
-            </div>
-            <div>
-              <span className="font-semibold">On hand (new):</span> The new total you plan to save after adjustments. Use Add Stock to set it to the current on-hand.
-            </div>
+          <div className="rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-2 sm:p-3 text-[10px] sm:text-xs text-gray-600 dark:text-gray-400 space-y-1">
+            <div><span className="font-medium">Stock:</span> Total units physically present.</div>
+            <div><span className="font-medium">New:</span> Planned total after adjustments.</div>
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
@@ -290,7 +300,7 @@ export default function ProductDetailPage() {
           {/* Hide per-location totals when a specific variant is selected to avoid confusion */}
           {!filterColor && !filterSize && (
             <div className="mt-4">
-              <h4 className="mb-2 text-sm font-medium">Per-location adjustment</h4>
+              <h4 className="mb-2 text-sm font-medium text-gray-900 dark:text-gray-100">Per-location adjustment</h4>
               <PerLocationEditor
                 rows={locations}
                 entries={entries}
@@ -306,24 +316,24 @@ export default function ProductDetailPage() {
           )}
 
           {/* Variant grid (Color/Size per location) */}
-          {variants.length > 0 && (
+              {variants.length > 0 && (
             <div className="mt-6">
-              <h4 className="mb-2 text-sm font-medium">Per-variant adjustment</h4>
+              <h4 className="mb-2 text-sm font-medium text-gray-900 dark:text-gray-100">Per-variant adjustment</h4>
               {(filterColor || filterSize) && (
-                <div className="mb-2 text-xs text-gray-600">Showing variant: {filterColor || '—'} {filterColor && filterSize ? '•' : ''} {filterSize || ''}</div>
+                <div className="mb-2 text-xs text-gray-600 dark:text-gray-400">Showing variant: {filterColor || '—'} {filterColor && filterSize ? '•' : ''} {filterSize || ''}</div>
               )}
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                  <thead className="bg-gray-50 dark:bg-gray-800">
                     <tr>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Color</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">On hand (current)</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">On hand (new)</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Color</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Size</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Location</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">On hand (current)</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">On hand (new)</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200 bg-white">
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
                     {variants
                       .filter((v) => {
                         const c = (v.color || '').trim();
@@ -337,10 +347,10 @@ export default function ProductDetailPage() {
                       const planned = variantEdits[key] ?? v.on_hand_new ?? v.on_hand_current ?? 0;
                       return (
                         <tr key={key}>
-                          <td className="px-3 py-2 text-sm text-gray-700">{v.color || '—'}</td>
-                          <td className="px-3 py-2 text-sm text-gray-700">{v.size || '—'}</td>
-                          <td className="px-3 py-2 text-sm text-gray-700">{v.location}</td>
-                          <td className="px-3 py-2 text-sm text-right tabular-nums">{v.on_hand_current || 0}</td>
+                          <td className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{v.color || '—'}</td>
+                          <td className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{v.size || '—'}</td>
+                          <td className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{v.location}</td>
+                          <td className="px-3 py-2 text-sm text-right tabular-nums text-gray-900 dark:text-gray-100">{v.on_hand_current || 0}</td>
                           <td className="px-3 py-2 text-sm text-right">
                             {isEdit ? (
                               <input
@@ -408,24 +418,24 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead className="bg-gray-50 dark:bg-gray-800">
           <tr>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
-            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">On hand (current)</th>
-            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">On hand (new, planned)</th>
-            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Add qty</th>
+            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Location</th>
+            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">On hand (current)</th>
+            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">On hand (new, planned)</th>
+            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Add qty</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
           {rows.map((r, idx) => {
             const add = entries[idx]?.add ?? 0;
             const planned = add || r.onHandNew || 0;
             return (
               <tr key={r.location}>
-                <td className="px-3 py-2 text-sm text-gray-700">{r.location}</td>
-                <td className="px-3 py-2 text-sm text-right tabular-nums">{typeof r.onHandCurrent === 'number' ? r.onHandCurrent : 0}</td>
-                <td className="px-3 py-2 text-sm text-right tabular-nums">{planned}</td>
+                <td className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{r.location}</td>
+                <td className="px-3 py-2 text-sm text-right tabular-nums text-gray-900 dark:text-gray-100">{typeof r.onHandCurrent === 'number' ? r.onHandCurrent : 0}</td>
+                <td className="px-3 py-2 text-sm text-right tabular-nums text-gray-900 dark:text-gray-100">{planned}</td>
                 <td className="px-3 py-2 text-sm text-right">
                   {isEdit ? (
                     <div className="inline-flex items-center gap-1">
@@ -468,7 +478,7 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
                       </button>
                     </div>
                   ) : (
-                    <div className="text-sm text-gray-500">—</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">—</div>
                   )}
                 </td>
               </tr>
@@ -520,13 +530,16 @@ function FetchImageByHandle({ handle, onFound }: { handle?: string; onFound: (ur
   useEffect(() => {
     if (!handle || done) return;
     (async () => {
-      try {
-        const res = await fetch(`/api/images/${encodeURIComponent(handle)}`);
-        if (res.ok) {
-          const j = await res.json();
-          onFound(j.firstImageUrl || null);
-        }
-      } catch {}
+      // Check cache first
+      const cached = getCachedImageUrl(handle);
+      if (cached !== undefined) {
+        onFound(cached);
+        setDone(true);
+        return;
+      }
+      // Fetch and cache if not found
+      const url = await fetchAndCacheImageUrl(handle);
+      onFound(url);
       setDone(true);
     })();
   }, [handle, done, onFound]);
@@ -535,9 +548,9 @@ function FetchImageByHandle({ handle, onFound }: { handle?: string; onFound: (ur
 
 function Breakdown({ label, value, highlight }: { label: string; value: number; highlight?: boolean }) {
   return (
-    <div className={`rounded border p-3 ${highlight ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
-      <div className="text-xs text-gray-500">{label}</div>
-      <div className="text-lg font-semibold tabular-nums">{value}</div>
+    <div className={`rounded border p-3 ${highlight ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700'}`}>
+      <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
+      <div className="text-lg font-semibold tabular-nums text-gray-900 dark:text-gray-100">{value}</div>
     </div>
   );
 }

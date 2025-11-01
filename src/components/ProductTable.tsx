@@ -1,14 +1,16 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import Image from 'next/image';
 import { Product, computeAvailable, computeTotal } from '@/lib/inventory';
 // QuantityAdjuster removed per latest requirements; table is read-only
 import { ImageWithFallback } from '@/components/ImageWithFallback';
+import { InventoryCard } from '@/components/InventoryCard';
 import { getCurrentSession } from '@/lib/auth';
 import { fetchProducts, upsertProducts, updateOnHandNew, updateCommittedQty, upsertProductVariants, fetchAllVariants, ProductVariantRow } from '@/lib/productsApi';
 import { supabase } from '@/lib/supabaseClient';
+import { getCachedImageUrl, fetchAndCacheImageUrl, preloadImages } from '@/lib/imageCache';
 
 interface Props {
   initialProducts: Product[];
@@ -22,10 +24,15 @@ export function ProductTable({ initialProducts }: Props) {
   const [page, setPage] = useState<number>(1);
   const [query, setQuery] = useState<string>('');
   const [availability, setAvailability] = useState<'all' | 'in' | 'out'>('all');
+  const [selectedPrefix, setSelectedPrefix] = useState<string>('');
+  const [prefixDropdownOpen, setPrefixDropdownOpen] = useState<boolean>(false);
+  const prefixDropdownRef = useRef<HTMLDivElement>(null);
   // Always show variants (no manual grouping needed)
   const [groupBy] = useState<'sku_color'>('sku_color');
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
   const [variantRows, setVariantRows] = useState<ProductVariantRow[]>([]);
+  const [dropdownOpen, setDropdownOpen] = useState<boolean>(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // resolve role asynchronously
   useEffect(() => {
@@ -72,6 +79,20 @@ export function ProductTable({ initialProducts }: Props) {
     })();
   }, []);
 
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setDropdownOpen(false);
+      }
+      if (prefixDropdownRef.current && !prefixDropdownRef.current.contains(event.target as Node)) {
+        setPrefixDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const updateOnHand = (sku: string, next: number) => {
     // no-op in table; edits happen on product detail page now
   };
@@ -99,13 +120,27 @@ export function ProductTable({ initialProducts }: Props) {
     return undefined;
   }
 
-  type Agg = { sku: string; name: string; variant?: string; color?: string | null; size?: string | null; onHandCurrent: number; onHandNew: number; committed: number; incoming: number; available: number };
+  type Agg = { sku: string; location?: string; name: string; variant?: string; color?: string | null; size?: string | null; onHandCurrent: number; onHandNew: number; committed: number; incoming: number; available: number; prefix?: string };
+
+  // Extract prefix from SKU (e.g., "PT 131" -> "PT", "PN 03" -> "PN")
+  function extractPrefix(sku: string): string {
+    const match = sku.trim().match(/^([A-Za-z]+)/);
+    return match ? match[1].toUpperCase() : '';
+  }
 
   // Map of one representative product per SKU (used for names/order)
   const sampleBySku = useMemo(() => {
     const m = new Map<string, Product>();
     for (const r of rows) {
       if (!m.has(r.sku)) m.set(r.sku, r);
+    }
+    // Preload images for all products to avoid individual API calls
+    const handles = Array.from(m.values())
+      .map(p => (p as any)?.handle)
+      .filter((h): h is string => !!h && typeof h === 'string');
+    if (handles.length > 0) {
+      // Preload in background, don't block UI
+      preloadImages(handles).catch(() => {});
     }
     return m;
   }, [rows]);
@@ -138,16 +173,18 @@ export function ProductTable({ initialProducts }: Props) {
       });
     }
 
-    // Variant rows (Color/Size combined) - show all variants directly
+    // Variant rows (Color/Size combined) - group by SKU + Variant only (aggregate across all locations)
     const byKey = new Map<string, Agg>();
     const orderByKey = new Map<string, number>();
     if (variantRows.length > 0) {
       for (const v of variantRows) {
         const color = (v.color || '').trim();
         const size = (v.size || '').trim();
-        const keyVariant = (color || size) ? [color, size].filter(Boolean).join(' / ') : 'Unspecified';
-        const k = `${v.sku}__${color}__${size}`;
-        const a = byKey.get(k) || { sku: v.sku, name: sampleBySku.get(v.sku)?.name || v.sku, variant: keyVariant, color, size, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0 };
+        // Group by SKU + Variant only (NOT by location)
+        const variantKeyLabel = color || size || 'Unspecified';
+        const k = `${v.sku}__${variantKeyLabel}`;
+        const prefix = extractPrefix(v.sku);
+        const a = byKey.get(k) || { sku: v.sku, location: undefined, name: sampleBySku.get(v.sku)?.name || v.sku, variant: variantKeyLabel, color: color || null, size: size || null, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0, prefix };
         a.onHandCurrent += Number(v.on_hand_current || 0);
         a.onHandNew += Number(v.on_hand_new || 0);
         a.committed += Number(v.committed || 0);
@@ -165,9 +202,11 @@ export function ProductTable({ initialProducts }: Props) {
       for (const r of rows) {
         const color = (extractColor(r.rawRow, r.rawHeaders) || '').trim();
         const size = (extractSize(r.rawRow, r.rawHeaders) || '').trim();
-        const keyVariant = (color || size) ? [color, size].filter(Boolean).join(' / ') : 'Unspecified';
-        const k = `${r.sku}__${color}__${size}`;
-        const a = byKey.get(k) || { sku: r.sku, name: r.name, variant: keyVariant, color, size, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0 };
+        const variantKeyLabel = color || size || 'Unspecified';
+        // Group by SKU + Variant only (NOT by location)
+        const k = `${r.sku}__${variantKeyLabel}`;
+        const prefix = extractPrefix(r.sku);
+        const a = byKey.get(k) || { sku: r.sku, location: undefined, name: r.name, variant: variantKeyLabel, color, size, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0, prefix };
         a.onHandCurrent += (typeof r.onHandCurrent === 'number' ? r.onHandCurrent : 0);
         a.onHandNew += r.onHandNew || 0;
         a.committed += r.committed || 0;
@@ -181,7 +220,7 @@ export function ProductTable({ initialProducts }: Props) {
       }
     }
     for (const a of byKey.values()) a.available = a.onHandCurrent - a.committed;
-    return Array.from(byKey.values()).sort((x,y)=>{
+    const sorted = Array.from(byKey.values()).sort((x,y)=>{
       const kx = `${x.sku}__${x.variant || ''}`;
       const ky = `${y.sku}__${y.variant || ''}`;
       const ox = orderByKey.get(kx);
@@ -189,31 +228,82 @@ export function ProductTable({ initialProducts }: Props) {
       if (ox != null && oy != null && ox !== oy) return ox - oy;
       if (ox != null && oy == null) return -1;
       if (ox == null && oy != null) return 1;
-      return x.sku === y.sku ? (x.variant || '').localeCompare(y.variant || '') : x.sku.localeCompare(y.sku);
+      // Group by prefix first, then by SKU, then by variant
+      const prefixX = x.prefix || extractPrefix(x.sku);
+      const prefixY = y.prefix || extractPrefix(y.sku);
+      if (prefixX !== prefixY) return prefixX.localeCompare(prefixY);
+      if (x.sku !== y.sku) return x.sku.localeCompare(y.sku);
+      return (x.variant || '').localeCompare(y.variant || '');
     });
-  }, [rows, groupBy]);
+    return sorted;
+  }, [rows, groupBy, variantRows, sampleBySku]);
   const pageCount = useMemo(() => Math.max(1, Math.ceil(aggregated.length / PAGE_SIZE)), [aggregated]);
+  
+  // Get all unique prefixes from aggregated products
+  const availablePrefixes = useMemo(() => {
+    const prefixSet = new Set<string>();
+    aggregated.forEach((r) => {
+      const prefix = r.prefix || extractPrefix(r.sku);
+      if (prefix) prefixSet.add(prefix);
+    });
+    return Array.from(prefixSet).sort();
+  }, [aggregated]);
+
   const filtered = useMemo(() => {
+    let list = aggregated;
+    
+    // Filter by selected prefix first
+    if (selectedPrefix) {
+      list = list.filter((r) => {
+        const prefix = (r.prefix || extractPrefix(r.sku) || '').toUpperCase();
+        return prefix === selectedPrefix.toUpperCase();
+      });
+    }
+    
+    // Then apply search query
     const q = query.trim().toLowerCase();
-    let list = aggregated.filter((r) => {
-      const name = (r.name || '').toLowerCase();
-      const sku = (r.sku || '').toLowerCase();
-      const matchesQ = q.length === 0 || name.includes(q) || sku.includes(q);
-      if (!matchesQ) return false;
+    if (q.length > 0) {
+      // Normalize query - remove spaces for SKU matching, keep for name/variant
+      const qNormalized = q.replace(/\s+/g, '');
+      list = list.filter((r) => {
+        // For SKU: remove spaces for flexible matching (PT 101 = PT101)
+        const sku = (r.sku || '').trim().toLowerCase().replace(/\s+/g, '');
+        // For prefix: extract and search
+        const prefix = (r.prefix || extractPrefix(r.sku) || '').toLowerCase();
+        // For name and variant: keep spaces but normalize
+        const name = (r.name || '').trim().toLowerCase();
+        const variant = ((r.variant || r.color || r.size) || '').trim().toLowerCase();
+        // Search in all fields - SKU uses normalized query, others use original, prefix search added
+        const matchesQ = name.includes(q) || sku.includes(qNormalized) || variant.includes(q) || prefix.includes(qNormalized);
+        return matchesQ;
+      });
+    }
+    
+    // Apply availability filter
+    list = list.filter((r) => {
       const avail = r.onHandCurrent - r.committed;
       if (availability === 'in') return avail > 0;
       if (availability === 'out') return avail <= 0;
       return true;
     });
+    
     return list;
-  }, [aggregated, query, availability]);
+  }, [aggregated, query, availability, selectedPrefix]);
   const filteredPageCount = useMemo(() => Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)), [filtered]);
   const data = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
-    return filtered.slice(start, start + PAGE_SIZE);
+    const result = filtered.slice(start, start + PAGE_SIZE);
+    // Reset to page 1 if current page exceeds available pages
+    if (result.length === 0 && page > 1 && filtered.length > 0) {
+      return filtered.slice(0, PAGE_SIZE);
+    }
+    return result;
   }, [filtered, page]);
 
-  useEffect(() => { setPage(1); }, [query, availability, groupBy]);
+  useEffect(() => { 
+    setPage(1); 
+  }, [query, availability, groupBy, selectedPrefix]);
+
 
   const exportCsv = async () => {
     if (!isEdit) return;
@@ -402,11 +492,16 @@ export function ProductTable({ initialProducts }: Props) {
         try {
           await upsertProductVariants(variantRows);
           // Refresh variants list so new variant sizes/colors appear immediately
+          let variantsCount = variantRows.length;
           try {
             const fresh = await fetchAllVariants();
-            if (fresh.length > 0) setVariantRows(fresh);
+            if (fresh.length > 0) {
+              setVariantRows(fresh);
+              variantsCount = fresh.length;
+            }
           } catch {}
-          setNotice({ type: 'success', message: `Imported ${parsedDedup.length} rows. Saved to Supabase. Variants saved.${collapsedNotice ? ' ' + collapsedNotice : ''}` });
+          const collapsed = collapsedNotice ? `${collapsedNotice} (products table only)` : '';
+          setNotice({ type: 'success', message: `Imported ${lines.length - 1} CSV rows. Variants saved: ${variantsCount}. Products stored: ${parsedDedup.length}. ${collapsed}` });
         } catch (ve: any) {
           // Surface the precise Supabase/Postgres error to help diagnosis
           console.error('Variant upsert failed:', ve);
@@ -576,22 +671,40 @@ export function ProductTable({ initialProducts }: Props) {
   return (
     <div className="card overflow-hidden">
       {notice && (
-        <div className={`px-3 py-2 text-sm ${notice.type === 'error' ? 'bg-red-50 text-red-700 border-b border-red-200' : notice.type === 'warning' ? 'bg-yellow-50 text-yellow-700 border-b border-yellow-200' : 'bg-green-50 text-green-700 border-b border-green-200'}`}>
+        <div className={`px-3 py-2 text-sm ${notice.type === 'error' ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border-b border-red-200 dark:border-red-800' : notice.type === 'warning' ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300 border-b border-yellow-200 dark:border-yellow-800' : 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border-b border-green-200 dark:border-green-800'}`}>
           {notice.message}
         </div>
       )}
-      <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="text-sm text-gray-600">Total: {filtered.length} • Page {page} / {filteredPageCount}</div>
-        <div className="flex items-center gap-2">
-          <button className="btn-outline text-xs" onClick={() => setPage(1)} disabled={page === 1}>First</button>
-          <button className="btn-outline text-xs" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>Prev</button>
-          <button className="btn-outline text-xs" onClick={() => setPage((p) => Math.min(filteredPageCount, p + 1))} disabled={page === filteredPageCount}>Next</button>
-          <button className="btn-outline text-xs" onClick={() => setPage(filteredPageCount)} disabled={page === filteredPageCount}>Last</button>
+      <div className="flex flex-col gap-2 p-2 sm:p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
+          {query.trim() ? `Found ${filtered.length} of ${aggregated.length} items` : `${filtered.length} items`}
+        </div>
+        <div className="flex items-center gap-1">
+          <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage(1)} disabled={page === 1} title="First">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+            </svg>
+          </button>
+          <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} title="Previous">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage((p) => Math.min(filteredPageCount, p + 1))} disabled={page === filteredPageCount} title="Next">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage(filteredPageCount)} disabled={page === filteredPageCount} title="Last">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+            </svg>
+          </button>
           {isEdit && (
             <>
-              <button className="btn-outline text-xs" onClick={exportCsv}>Export CSV</button>
-              <label className="btn-primary text-xs cursor-pointer">
-                Import CSV
+              <button className="btn-outline text-xs px-2 py-1" onClick={exportCsv}>Export</button>
+              <label className="btn-primary text-xs px-2 py-1 cursor-pointer">
+                Import
                 <input
                   type="file"
                   accept=".csv,text/csv"
@@ -603,92 +716,191 @@ export function ProductTable({ initialProducts }: Props) {
                   }}
                 />
               </label>
-              <button
-                className="btn-outline text-xs"
-                onClick={() => {
-                  try {
-                    if (typeof window !== 'undefined') {
-                      localStorage.removeItem(STORAGE_KEY);
-                    }
-                    setRows([]);
-                    setNotice({ type: 'success', message: 'Local cache cleared.' });
-                    setPage(1);
-                  } catch (e) {
-                    setNotice({ type: 'error', message: 'Failed to clear local cache.' });
-                  }
-                }}
-              >
-                Clear local cache
-              </button>
             </>
           )}
         </div>
       </div>
-      <div className="px-3 pb-2">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+      <div className="px-2 sm:px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Prefix Dropdown - Compact */}
+          <div className="relative" ref={prefixDropdownRef}>
+            <button
+              type="button"
+              className="input text-xs px-2 py-1.5 w-24 sm:w-28 font-medium flex items-center justify-between cursor-pointer hover:border-brand-400 dark:hover:border-brand-500"
+              onClick={() => setPrefixDropdownOpen(!prefixDropdownOpen)}
+              title="Filter by prefix"
+            >
+              <span className="truncate text-xs">{selectedPrefix || 'Prefix'}</span>
+              <svg
+                className={`w-3 h-3 flex-shrink-0 ml-1 transition-transform ${prefixDropdownOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {prefixDropdownOpen && (
+              <div className="absolute z-50 w-28 mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg overflow-hidden max-h-60 overflow-y-auto">
+                <button
+                  type="button"
+                  className={`w-full px-2 py-1.5 text-xs text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
+                    selectedPrefix === '' ? 'bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-300 font-medium' : 'text-gray-700 dark:text-gray-300'
+                  }`}
+                  onClick={() => {
+                    setSelectedPrefix('');
+                    setPrefixDropdownOpen(false);
+                  }}
+                >
+                  All
+                </button>
+                {availablePrefixes.map((prefix) => (
+                  <button
+                    key={prefix}
+                    type="button"
+                    className={`w-full px-2 py-1.5 text-xs text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
+                      selectedPrefix === prefix ? 'bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-300 font-medium' : 'text-gray-700 dark:text-gray-300'
+                    }`}
+                    onClick={() => {
+                      setSelectedPrefix(prefix);
+                      setPrefixDropdownOpen(false);
+                    }}
+                  >
+                    {prefix}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* Search Input - Compact */}
           <input
             type="text"
-            className="input w-full sm:w-72"
-            placeholder="Search by SKU or Name"
+            className="input text-xs px-2 py-1.5 flex-1 min-w-[120px] sm:min-w-[200px]"
+            placeholder="Search..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <select
-            className="input w-full sm:w-48"
-            value={availability}
-            onChange={(e) => setAvailability(e.target.value as any)}
-          >
-            <option value="all">All availability</option>
-            <option value="in">In stock</option>
-            <option value="out">Out of stock</option>
-          </select>
-          {/* grouping removed: always show variants */}
+          {/* Availability Dropdown - Compact */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              type="button"
+              className="input text-xs px-2 py-1.5 w-20 sm:w-24 font-medium flex items-center justify-between cursor-pointer hover:border-brand-400 dark:hover:border-brand-500"
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+            >
+              <span className="text-xs">
+                {availability === 'all' ? 'All' : availability === 'in' ? 'In' : 'Out'}
+              </span>
+              <svg
+                className={`w-3 h-3 flex-shrink-0 ml-1 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {dropdownOpen && (
+              <div className="absolute z-50 w-24 mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg overflow-hidden">
+                <button
+                  type="button"
+                  className={`w-full px-2 py-1.5 text-xs text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
+                    availability === 'all' ? 'bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-300 font-medium' : 'text-gray-700 dark:text-gray-300'
+                  }`}
+                  onClick={() => {
+                    setAvailability('all');
+                    setDropdownOpen(false);
+                  }}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  className={`w-full px-2 py-1.5 text-xs text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
+                    availability === 'in' ? 'bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-300 font-medium' : 'text-gray-700 dark:text-gray-300'
+                  }`}
+                  onClick={() => {
+                    setAvailability('in');
+                    setDropdownOpen(false);
+                  }}
+                >
+                  In stock
+                </button>
+                <button
+                  type="button"
+                  className={`w-full px-2 py-1.5 text-xs text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
+                    availability === 'out' ? 'bg-brand-50 dark:bg-brand-900/30 text-brand-700 dark:text-brand-300 font-medium' : 'text-gray-700 dark:text-gray-300'
+                  }`}
+                  onClick={() => {
+                    setAvailability('out');
+                    setDropdownOpen(false);
+                  }}
+                >
+                  Out of stock
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50 sticky top-0 z-10">
+      {/* Mobile cards (≤640px) */}
+      <div className="block sm:hidden px-2 pb-3 space-y-2">
+        {data.map((p) => {
+          const available = p.onHandCurrent - p.committed;
+          const sample = sampleBySku.get(p.sku);
+          const imageUrl = (sample?.fullImageUrl || sample?.smallImageUrl) as any;
+          return (
+            <InventoryCard
+              key={`${p.sku}__${p.variant || ''}__${page}`}
+              imageUrl={imageUrl}
+              handle={(sample as any)?.handle}
+              name={p.name}
+              sku={p.sku}
+              location={p.location as any}
+              onHandCurrent={p.onHandCurrent}
+              onHandNew={p.onHandNew}
+              available={available}
+              committed={p.committed}
+              color={p.color}
+              size={p.size}
+            />
+          );
+        })}
+      </div>
+
+      {/* Desktop table (≥640px) */}
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0 z-10">
             <tr>
-              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Image</th>
-              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product Name</th>
-              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
-              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Variant</th>
-              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Colors</th>
-              <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">On hand (current)</th>
-              {/* Location hidden: one row per SKU */}
-              <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Incoming</th>
-              <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Committed</th>
-              <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Available</th>
-              <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">On hand (new)</th>
-              <th className="px-3 py-2"></th>
+              <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Image</th>
+              <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
+              <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">SKU</th>
+              <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Variant</th>
+              <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Stock</th>
+              <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Available</th>
+              <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Committed</th>
+              <th className="px-2 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">New</th>
+              <th className="px-2 py-2"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 bg-white">
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
             {data.map((p) => {
               const available = p.onHandCurrent - p.committed;
               const sample = sampleBySku.get(p.sku);
               return (
-                <tr key={`${p.sku}`} className="hover:bg-gray-50">
-                  <td className="px-3 py-2">
+                <tr key={`${p.sku}__${p.variant || ''}__${page}`} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                  <td className="px-2 py-2">
                     <Thumb handle={(sample as any)?.handle} url={(sample?.smallImageUrl || sample?.fullImageUrl) as any} name={p.name} />
                   </td>
-                  <td className="px-3 py-2 text-sm font-medium text-gray-900">{p.name}</td>
-                  <td className="px-3 py-2 text-sm text-gray-700">{p.sku}</td>
-                  <td className="px-3 py-2 text-xs text-gray-700">{p.variant}</td>
-                  <td className="px-3 py-2 text-xs text-gray-700">
-                    <div className="flex flex-wrap gap-1">
-                      {colorsForSku(p.sku).map((c) => (
-                        <span key={c} className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5">{c}</span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-sm text-right tabular-nums">{p.onHandCurrent}</td>
-                  <td className="px-3 py-2 text-sm text-right tabular-nums">{p.incoming}</td>
-                  <td className="px-3 py-2 text-sm text-right tabular-nums">{p.committed}</td>
-                  <td className="px-3 py-2 text-sm text-right tabular-nums">{available}</td>
-                  <td className="px-3 py-2 text-sm text-center"><span className="tabular-nums">{p.onHandNew}</span></td>
-                  <td className="px-3 py-2 text-right">
-                    <Link className="btn-outline text-xs" href={`/product/${encodeURIComponent(p.sku)}?color=${encodeURIComponent(p.color || '')}&size=${encodeURIComponent(p.size || '')}`}>View</Link>
+                  <td className="px-2 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{p.name}</td>
+                  <td className="px-2 py-2 text-xs text-gray-700 dark:text-gray-300">{p.sku}</td>
+                  <td className="px-2 py-2 text-xs text-gray-600 dark:text-gray-400">{(p.color && p.color.trim()) || (p.size && p.size.trim()) || '—'}</td>
+                  <td className="px-2 py-2 text-sm text-right tabular-nums font-medium text-gray-900 dark:text-gray-100">{p.onHandCurrent}</td>
+                  <td className="px-2 py-2 text-sm text-right tabular-nums font-semibold text-brand-600 dark:text-brand-400">{available}</td>
+                  <td className="px-2 py-2 text-xs text-right tabular-nums text-gray-600 dark:text-gray-400">{p.committed}</td>
+                  <td className="px-2 py-2 text-sm text-center"><span className="tabular-nums text-gray-700 dark:text-gray-300">{p.onHandNew}</span></td>
+                  <td className="px-2 py-2 text-right">
+                    <Link className="btn-outline text-xs px-2 py-1" href={`/product/${encodeURIComponent(p.sku)}?location=${encodeURIComponent((p as any).location || '')}&color=${encodeURIComponent(p.color || '')}&size=${encodeURIComponent(p.size || '')}`}>View</Link>
                   </td>
                 </tr>
               );
@@ -696,12 +908,28 @@ export function ProductTable({ initialProducts }: Props) {
           </tbody>
         </table>
       </div>
-      <div className="flex items-center justify-end gap-2 p-3 border-t bg-white">
-        <button className="btn-outline text-xs" onClick={() => setPage(1)} disabled={page === 1}>First</button>
-        <button className="btn-outline text-xs" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>Prev</button>
-        <span className="text-xs text-gray-600">Page {page} / {pageCount}</span>
-        <button className="btn-outline text-xs" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={page === pageCount}>Next</button>
-        <button className="btn-outline text-xs" onClick={() => setPage(pageCount)} disabled={page === pageCount}>Last</button>
+      <div className="flex items-center justify-center gap-2 p-2 sm:p-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage(1)} disabled={page === 1} title="First">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+          </svg>
+        </button>
+        <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} title="Previous">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        <span className="text-xs text-gray-600 dark:text-gray-400 px-2">{page} / {pageCount}</span>
+        <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={page === pageCount} title="Next">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+        <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage(pageCount)} disabled={page === pageCount} title="Last">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+          </svg>
+        </button>
       </div>
     </div>
   );
@@ -715,14 +943,16 @@ function Thumb({ handle, url, name }: { handle?: string; url?: string; name: str
   useEffect(() => { setSrc(url); }, [url]);
   useEffect(() => {
     if (src || !handle) return;
+    // Check cache first
+    const cached = getCachedImageUrl(handle);
+    if (cached !== undefined) {
+      setSrc(cached || undefined);
+      return;
+    }
+    // Fetch and cache if not found
     (async () => {
-      try {
-        const res = await fetch(`/api/images/${encodeURIComponent(handle)}`);
-        if (res.ok) {
-          const j = await res.json();
-          if (j.firstImageUrl) setSrc(j.firstImageUrl);
-        }
-      } catch {}
+      const imageUrl = await fetchAndCacheImageUrl(handle);
+      if (imageUrl) setSrc(imageUrl);
     })();
   }, [handle, src]);
   const fallback = `data:image/svg+xml;utf8,${encodeURIComponent(
@@ -733,12 +963,11 @@ function Thumb({ handle, url, name }: { handle?: string; url?: string; name: str
       className="relative"
       onMouseEnter={(e) => {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        const previewW = 320; // reduced size
+        const previewW = 320;
         const previewH = 320;
         const margin = 12;
         let left = rect.right + margin;
         let top = rect.top + rect.height / 2 - previewH / 2;
-        // Clamp to viewport
         const vw = window.innerWidth, vh = window.innerHeight;
         if (left + previewW > vw - 8) left = Math.max(8, vw - previewW - 8);
         if (top < 8) top = 8;
@@ -748,17 +977,19 @@ function Thumb({ handle, url, name }: { handle?: string; url?: string; name: str
       }}
       onMouseLeave={() => setShow(false)}
     >
-      <Image src={src || fallback} alt={name} width={40} height={40} className="rounded object-cover" />
+      <div className="relative w-8 h-8 sm:w-10 sm:h-10 rounded overflow-hidden bg-gray-100 dark:bg-gray-700">
+        <Image src={src || fallback} alt={name} fill sizes="(max-width: 640px) 32px, 40px" className="object-cover" onError={() => setSrc(fallback)} />
+      </div>
       {src && show && (
         <>
           <div
             className="fixed z-[1000]"
             style={{ top: pos.top, left: pos.left }}
           >
-            <div className="bg-white border shadow-2xl p-2 rounded-lg">
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-2xl p-2 rounded-lg">
               <Image src={src} alt={name} width={320} height={320} className="rounded object-contain max-w-[80vw] max-h-[80vh]" />
             </div>
-            <div className="absolute left-[-8px] top-1/2 h-0 w-0 -translate-y-1/2 border-t-8 border-b-8 border-r-8 border-t-transparent border-b-transparent border-r-white drop-shadow" />
+            <div className="absolute left-[-8px] top-1/2 h-0 w-0 -translate-y-1/2 border-t-8 border-b-8 border-r-8 border-t-transparent border-b-transparent border-r-white dark:border-r-gray-800 drop-shadow" />
           </div>
         </>
       )}
