@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import Image from 'next/image';
 import { Product, computeAvailable, computeTotal } from '@/lib/inventory';
@@ -74,16 +74,26 @@ export function ProductTable({ initialProducts }: Props) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
   };
 
-  // then try Supabase (authoritative)
-  useEffect(() => {
-    (async () => {
+  // Refresh function to reload data from Supabase
+  const refreshData = useCallback(async () => {
+    try {
       const remote = await fetchProducts();
       if (remote.length > 0) {
         setRows(remote);
         persist(remote);
       }
-    })();
-  }, []);
+      // Also refresh variants
+      const v = await fetchAllVariants();
+      if (v.length > 0) setVariantRows(v);
+    } catch (error) {
+      console.error('Failed to refresh data:', error);
+    }
+  }, []); // Empty deps - setRows, setVariantRows, and persist are stable
+
+  // then try Supabase (authoritative)
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   // Load variant rows when grouping by variant, or when app starts (best effort)
   useEffect(() => {
@@ -93,6 +103,47 @@ export function ProductTable({ initialProducts }: Props) {
       if (v.length > 0) setVariantRows(v);
     })();
   }, [groupBy, variantRows.length]);
+
+  // Refresh data when window regains focus (e.g., user returns from product detail page)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleFocus = () => {
+      refreshData();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [refreshData]);
+
+  // Refresh when pathname changes (user navigates back to this page)
+  // Also use visibilitychange to detect when tab becomes visible
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && pathname === '/mv') {
+        refreshData();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [pathname, refreshData]);
+  
+  // Refresh when pathname changes (user navigates back to this page)
+  useEffect(() => {
+    if (pathname === '/mv') {
+      refreshData();
+    }
+  }, [pathname, refreshData]);
+
+  // Also refresh periodically (every 30 seconds) to catch updates from other tabs/sessions
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const interval = setInterval(() => {
+      refreshData();
+    }, 30000); // 30 seconds
+    return () => clearInterval(interval);
+  }, [refreshData]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -351,29 +402,86 @@ export function ProductTable({ initialProducts }: Props) {
   };
 
 
+  // Clear local cache and refresh from database
+  const clearLocalCache = async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      // Clear all CSMS-related localStorage keys
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem('csms_last_headers');
+      
+      // Refresh data from Supabase
+      await refreshData();
+      
+      setNotice({ type: 'success', message: 'Local cache cleared. Data refreshed from database.' });
+    } catch (error) {
+      console.error('Failed to clear cache:', error);
+      setNotice({ type: 'error', message: 'Failed to clear cache. Please try again.' });
+    }
+  };
+
   const exportCsv = async () => {
     if (!isEdit) return;
     try {
-      // Prefer exporting from product_variants (exact variant rows)
+      // Refresh data from database before exporting to ensure we have the latest values
+      await refreshData();
+      
+      // Fetch fresh data directly from database for export
+      const freshProducts = await fetchProducts();
+      
+      // Prefer exporting from product_variants (exact variant rows) if available
       if (supabase) {
-        const { data, error } = await supabase.from('product_variants').select('*');
-        if (!error && data && data.length > 0) {
+        const { data: variantData, error: variantError } = await supabase.from('product_variants').select('*');
+        if (!variantError && variantData && variantData.length > 0) {
+          // Fetch products to get metadata (title, handle, etc.)
+          const { data: productsData } = await supabase.from('products').select('*');
+          const productsMap = new Map<string, any>();
+          if (productsData) {
+            for (const p of productsData) {
+              const key = `${p.sku}__${p.location}`;
+              productsMap.set(key, p);
+            }
+          }
+
           const headers = buildVariantExportHeaders();
           const lines: string[] = [headers.join(',')];
-          for (const v of data as any[]) {
+          for (const v of variantData as any[]) {
             const raw: Record<string, any> = v.raw || {};
             const record: Record<string, any> = { ...raw };
-            // Ensure critical fields are current
-            record['SKU'] = v['SKU'] || v.sku || raw['SKU'] || '';
-            record['Location'] = v['Location'] || v.location || raw['Location'] || '';
+            
+            // Get product metadata
+            const productKey = `${v.sku}__${v.location}`;
+            const product = productsMap.get(productKey);
+            
+            // Ensure critical fields are current from database
+            record['SKU'] = v.sku || raw['SKU'] || '';
+            record['Location'] = v.location || raw['Location'] || '';
+            if (product) {
+              record['Title'] = product.title || raw['Title'] || '';
+              record['Handle'] = product.handle || raw['Handle'] || '';
+            }
+            
+            // Update stock values from database (most current)
             record['On hand (current)'] = v.on_hand_current ?? raw['On hand (current)'] ?? 0;
             record['On hand (new)'] = v.on_hand_new ?? raw['On hand (new)'] ?? 0;
             record['Committed (not editable)'] = v.committed ?? raw['Committed (not editable)'] ?? 0;
             record['Incoming (not editable)'] = v.incoming ?? raw['Incoming (not editable)'] ?? 0;
             record['Unavailable (not editable)'] = v.unavailable ?? raw['Unavailable (not editable)'] ?? 0;
+            
             // Recompute Available from new - committed
             const recomputedAvailable = Number(record['On hand (new)'] || 0) - Number(record['Committed (not editable)'] || 0);
             record['Available (not editable)'] = recomputedAvailable;
+            
+            // Include variant fields if present
+            if (v.color) {
+              record['Option1 Value'] = v.color;
+              record['Option1 Name'] = 'Color';
+            }
+            if (v.size) {
+              record['Option2 Value'] = v.size;
+              record['Option2 Name'] = 'Size';
+            }
+            
             const rowValues = headers.map((h) => escapeCsv(record[h] ?? ''));
             lines.push(rowValues.join(','));
           }
@@ -382,11 +490,12 @@ export function ProductTable({ initialProducts }: Props) {
         }
       }
 
-      // Fallback to products rows export (legacy)
-      const headers = buildExportHeaders(rows);
+      // Fallback to products rows export (use fresh data from database)
+      const headers = buildExportHeaders(freshProducts);
       const lines = [headers.join(',')];
-      for (const r of rows) {
+      for (const r of freshProducts) {
         const record: Record<string, string> = { ...(r.rawRow || {}) };
+        // Update with current values from database
         upsert(record, 'On hand (new)', String(r.onHandNew));
         upsert(record, 'On hand (current)', String(r.onHandCurrent));
         upsert(record, 'Committed (not editable)', String(r.committed));
@@ -402,7 +511,10 @@ export function ProductTable({ initialProducts }: Props) {
         lines.push(rowValues.join(','));
       }
       downloadCsv(lines.join('\n'), 'csms-products-export.csv');
-    } catch {}
+    } catch (error) {
+      console.error('Export failed:', error);
+      setNotice({ type: 'error', message: `Export failed: ${error instanceof Error ? error.message : 'Unknown error'}` });
+    }
   };
 
   const importCsv = async (file: File) => {
@@ -511,11 +623,38 @@ export function ProductTable({ initialProducts }: Props) {
       persist(nextArr);
       return nextArr;
     });
+    // Validate that we have data to import
+    if (parsed.length === 0) {
+      setNotice({ type: 'error', message: 'No valid rows found in CSV. Please check that SKU column exists and has values.' });
+      return;
+    }
+
+    if (parsedDedup.length === 0) {
+      setNotice({ type: 'warning', message: `Parsed ${parsed.length} rows but all were filtered out. Check SKU and Location columns.` });
+      return;
+    }
+
     try {
       if (!supabase) {
         setNotice({ type: 'warning', message: 'Supabase not configured (env vars missing). Imported locally only.' });
       } else {
-        await upsertProducts(parsedDedup);
+        // Upsert products
+        let productsStored = 0;
+        try {
+          await upsertProducts(parsedDedup);
+          productsStored = parsedDedup.length;
+          console.log(`Successfully upserted ${productsStored} products`);
+        } catch (pe: any) {
+          console.error('Products upsert failed:', pe);
+          const pMsg = pe?.message || pe?.error?.message || pe?.details || 'Unknown error';
+          const pCode = pe?.code || pe?.error?.code || '';
+          setNotice({
+            type: 'error',
+            message: `Products upsert failed${pCode ? ` (code ${pCode})` : ''}: ${pMsg}`,
+          });
+          return;
+        }
+
         // Build and upsert variant rows keyed by (sku, location, color, size)
         const variantRows: Array<{ sku: string; location: string; color?: string | null; size?: string | null; on_hand_current?: number; on_hand_new?: number; committed?: number; incoming?: number; unavailable?: number; raw?: Record<string, any> }>
           = [];
@@ -535,29 +674,35 @@ export function ProductTable({ initialProducts }: Props) {
             raw: p.rawRow as any,
           });
         }
-        try {
-          await upsertProductVariants(variantRows);
-          // Refresh variants list so new variant sizes/colors appear immediately
-          let variantsCount = variantRows.length;
+        
+        let variantsCount = 0;
+        if (variantRows.length > 0) {
           try {
-            const fresh = await fetchAllVariants();
-            if (fresh.length > 0) {
-              setVariantRows(fresh);
-              variantsCount = fresh.length;
-            }
-          } catch {}
-          const collapsed = collapsedNotice ? `${collapsedNotice} (products table only)` : '';
-          setNotice({ type: 'success', message: `Imported ${lines.length - 1} CSV rows. Variants saved: ${variantsCount}. Products stored: ${parsedDedup.length}. ${collapsed}` });
-        } catch (ve: any) {
-          // Surface the precise Supabase/Postgres error to help diagnosis
-          console.error('Variant upsert failed:', ve);
-          const msg = ve?.message || ve?.error?.message || ve?.details || ve?.hint || 'Unknown error';
-          const code = ve?.code || ve?.error?.code || '';
-          setNotice({
-            type: 'warning',
-            message: `Variants upsert failed${code ? ` (code ${code})` : ''}: ${msg}`,
-          });
+            await upsertProductVariants(variantRows);
+            variantsCount = variantRows.length;
+            console.log(`Successfully upserted ${variantsCount} variants`);
+            // Refresh variants list so new variant sizes/colors appear immediately
+            try {
+              const fresh = await fetchAllVariants();
+              if (fresh.length > 0) {
+                setVariantRows(fresh);
+              }
+            } catch {}
+          } catch (ve: any) {
+            // Surface the precise Supabase/Postgres error to help diagnosis
+            console.error('Variant upsert failed:', ve);
+            const msg = ve?.message || ve?.error?.message || ve?.details || ve?.hint || 'Unknown error';
+            const code = ve?.code || ve?.error?.code || '';
+            setNotice({
+              type: 'warning',
+              message: `Products saved: ${productsStored}. Variants upsert failed${code ? ` (code ${code})` : ''}: ${msg}`,
+            });
+            return;
+          }
         }
+
+        const collapsed = collapsedNotice ? `${collapsedNotice}` : '';
+        setNotice({ type: 'success', message: `Imported ${lines.length - 1} CSV rows. Products stored: ${productsStored}. Variants saved: ${variantsCount}. ${collapsed}` });
       }
     } catch (e: any) {
       console.error('Import upsert failed:', e);
@@ -764,6 +909,13 @@ export function ProductTable({ initialProducts }: Props) {
               </label>
             </>
           )}
+          <button 
+            className="btn-outline text-xs px-2 py-1 hidden sm:inline-block" 
+            onClick={clearLocalCache}
+            title="Clear local cache and refresh from database"
+          >
+            Clear Cache
+          </button>
         </div>
       </div>
       <div className="px-2 sm:px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">

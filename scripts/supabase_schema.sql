@@ -50,6 +50,15 @@ begin
       using (true)
       with check (true);
   end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname='public' and tablename='products' and policyname='products_select'
+  ) then
+    create policy products_select on public.products
+      for select to authenticated
+      using (true);
+  end if;
 end $$;
 
 -- PRODUCT VARIANTS (one row per SKU+Location+Color+Size)
@@ -112,56 +121,14 @@ begin
       using (true)
       with check (true);
   end if;
-end $$;
-
--- OPTIONAL single-table for round-trip (inventory) if you want it
--- comment out if not needed
-create table if not exists public.inventory (
-  id bigserial primary key,
-  handle text,
-  title text,
-  option1_name text,
-  option1_value text,
-  option2_name text,
-  option2_value text,
-  option3_name text,
-  option3_value text,
-  sku text,
-  hs_code text,
-  coo text,
-  location text,
-  bin_name text,
-  incoming int,
-  unavailable int,
-  committed int,
-  available int,
-  on_hand_current int,
-  on_hand_new int,
-  variant_key text unique
-);
-
-alter table public.inventory enable row level security;
-
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname='public' and tablename='inventory' and policyname='inventory_insert'
-  ) then
-    create policy inventory_insert on public.inventory
-      for insert to authenticated
-      with check (true);
-  end if;
 
   if not exists (
     select 1 from pg_policies
-    where schemaname='public' and tablename='inventory' and policyname='inventory_update'
+    where schemaname='public' and tablename='product_variants' and policyname='product_variants_select'
   ) then
-    create policy inventory_update on public.inventory
-      for update to authenticated
-      using (true)
-      with check (true);
+    create policy product_variants_select on public.product_variants
+      for select to authenticated
+      using (true);
   end if;
 end $$;
-
 

@@ -287,40 +287,6 @@ export default function ProductDetailPage() {
           <div className="hidden sm:flex gap-2 mt-3">
               {isEdit && (
                 <button
-                  className="btn-outline text-sm px-4 py-2"
-                  onClick={async () => {
-                    const updatedRows: Product[] = [];
-                    for (const r of locations) {
-                      const delta = r.onHandNew || 0;
-                      const newCurrent = (r.onHandCurrent || 0) + delta;
-                      try {
-                        await updateOnHandCurrent(r.sku, r.location, newCurrent);
-                        await updateOnHandNew(r.sku, r.location, 0);
-                      } catch {}
-                      updatedRows.push({ ...r, onHandCurrent: newCurrent, onHandNew: 0 });
-                    }
-                    setLocations(updatedRows);
-                    const combined = combine(updatedRows);
-                    setProduct(combined);
-                    try {
-                      const raw = localStorage.getItem(STORAGE_KEY);
-                      if (raw) {
-                        const list = JSON.parse(raw) as Product[];
-                        const nextList = list.map((p) => {
-                          if (p.sku !== product.sku) return p;
-                          const match = updatedRows.find((r) => r.sku === p.sku && r.location === p.location);
-                          return match ? { ...p, onHandCurrent: match.onHandCurrent, onHandNew: 0 } : p;
-                        });
-                        localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
-                      }
-                    } catch {}
-                  }}
-                >
-                  Set On hand (new) = current
-                </button>
-              )}
-              {isEdit && (
-                <button
                   className="btn-primary text-sm px-4 py-2"
                   onClick={() => {
                     setShowLocationModal(true);
@@ -455,6 +421,57 @@ export default function ProductDetailPage() {
               {isEdit && (
                 <div className="mt-2 flex items-center gap-2 justify-end">
                   <button
+                    className="btn-outline text-xs py-1.5 px-3"
+                    onClick={async () => {
+                      if (!supabase) return;
+                      const updatedVariants = [];
+                      for (const v of variants) {
+                        const delta = v.on_hand_new || 0;
+                        const newCurrent = (v.on_hand_current || 0) + delta;
+                        try {
+                          await supabase
+                            .from('product_variants')
+                            .update({ 
+                              on_hand_current: newCurrent,
+                              on_hand_new: 0
+                            })
+                            .eq('sku', v.sku)
+                            .eq('location', v.location)
+                            .eq('color', v.color ?? null)
+                            .eq('size', v.size ?? null);
+                          updatedVariants.push({ ...v, on_hand_current: newCurrent, on_hand_new: 0 });
+                        } catch (error) {
+                          console.error('Failed to update variant:', error);
+                          updatedVariants.push(v);
+                        }
+                      }
+                      // Update variant edits
+                      const updatedEdits: Record<string, number> = {};
+                      for (const v of updatedVariants) {
+                        const key = variantKey(v);
+                        updatedEdits[key] = 0;
+                      }
+                      setVariantEdits(updatedEdits);
+                      // Refresh variants from database
+                      try {
+                        const { data } = await supabase
+                          .from('product_variants')
+                          .select('id, sku, location, color, size, on_hand_current, on_hand_new')
+                          .eq('sku', sku);
+                        if (data) {
+                          const validVariants = (data as any[]).filter(v => {
+                            const c = (v.color || '').trim();
+                            const s = (v.size || '').trim();
+                            return c !== '' || s !== '';
+                          });
+                          setVariants(validVariants);
+                        }
+                      } catch {}
+                    }}
+                  >
+                    Set On hand (new) = current
+                  </button>
+                  <button
                     className="btn-primary text-xs py-1.5 px-3"
                     onClick={async () => {
                       if (!supabase) return;
@@ -477,7 +494,14 @@ export default function ProductDetailPage() {
                           .from('product_variants')
                           .select('id, sku, location, color, size, on_hand_current, on_hand_new')
                           .eq('sku', sku);
-                        setVariants((data as any) || []);
+                        if (data) {
+                          const validVariants = (data as any[]).filter(v => {
+                            const c = (v.color || '').trim();
+                            const s = (v.size || '').trim();
+                            return c !== '' || s !== '';
+                          });
+                          setVariants(validVariants);
+                        }
                       } catch {}
                     }}
                   >
@@ -491,44 +515,10 @@ export default function ProductDetailPage() {
       </div>
 
       {/* Mobile buttons - static at bottom - show for all products */}
-      <div className="mt-6 grid grid-cols-2 gap-2 sm:hidden">
+      <div className="mt-6 sm:hidden">
             {isEdit && (
               <button
-                className="btn-outline text-xs px-2 py-1.5 shadow-lg"
-                onClick={async () => {
-                  const updatedRows: Product[] = [];
-                  for (const r of locations) {
-                    const delta = r.onHandNew || 0;
-                    const newCurrent = (r.onHandCurrent || 0) + delta;
-                    try {
-                      await updateOnHandCurrent(r.sku, r.location, newCurrent);
-                      await updateOnHandNew(r.sku, r.location, 0);
-                    } catch {}
-                    updatedRows.push({ ...r, onHandCurrent: newCurrent, onHandNew: 0 });
-                  }
-                  setLocations(updatedRows);
-                  const combined = combine(updatedRows);
-                  setProduct(combined);
-                  try {
-                    const raw = localStorage.getItem(STORAGE_KEY);
-                    if (raw) {
-                      const list = JSON.parse(raw) as Product[];
-                      const nextList = list.map((p) => {
-                        if (p.sku !== product.sku) return p;
-                        const match = updatedRows.find((r) => r.sku === p.sku && r.location === p.location);
-                        return match ? { ...p, onHandCurrent: match.onHandCurrent, onHandNew: 0 } : p;
-                      });
-                      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
-                    }
-                  } catch {}
-                }}
-              >
-                Set On hand (new) = current
-              </button>
-            )}
-            {isEdit && (
-              <button
-                className="btn-primary text-xs px-3 py-1.5 shadow-lg"
+                className="btn-primary text-xs px-3 py-1.5 shadow-lg w-full"
                 onClick={() => {
                   setShowLocationModal(true);
                 }}
@@ -735,6 +725,46 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
       </table>
       {isEdit && (
         <div className="mt-2 flex items-center gap-2 justify-end">
+          <button
+            className="btn-outline text-xs py-1.5 px-3"
+            onClick={async () => {
+              const updated: Product[] = [];
+              for (let i = 0; i < rows.length; i++) {
+                const r = rows[i];
+                const delta = entries[i]?.add ?? r.onHandNew ?? 0;
+                const newCurrent = (r.onHandCurrent || 0) + delta;
+                try {
+                  await updateOnHandCurrent(r.sku, r.location, newCurrent);
+                  await updateOnHandNew(r.sku, r.location, 0);
+                } catch (error) {
+                  console.error('Failed to update:', error);
+                }
+                updated.push({ ...r, onHandCurrent: newCurrent, onHandNew: 0 });
+              }
+              // Reset entries to 0
+              setEntries(rows.map((r) => ({ loc: r.location, add: 0 })));
+              // Update localStorage
+              try {
+                const STORAGE_KEY = 'csms_products_v1';
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (raw) {
+                  const list = JSON.parse(raw) as Product[];
+                  const nextList = list.map((p) => {
+                    const idx = rows.findIndex((r) => r.sku === p.sku && r.location === p.location);
+                    if (idx >= 0) {
+                      const updatedRow = updated.find((r) => r.sku === p.sku && r.location === p.location);
+                      return updatedRow ? { ...p, onHandCurrent: updatedRow.onHandCurrent, onHandNew: 0 } : p;
+                    }
+                    return p;
+                  });
+                  localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
+                }
+              } catch {}
+              onSaved(updated);
+            }}
+          >
+            Set On hand (new) = current
+          </button>
           <button
             className="btn-primary text-xs py-1.5 px-3"
             onClick={async () => {

@@ -104,12 +104,43 @@ export async function fetchAllVariants(): Promise<ProductVariantRow[]> {
 
 export async function updateOnHandNew(sku: string, location: string, onHandNew: number): Promise<void> {
   if (!supabase) return;
-  const { error } = await supabase
+  // Update products table
+  const { error: productsError } = await supabase
     .from('products')
     .update({ on_hand_new: onHandNew })
     .eq('sku', sku)
     .eq('location', location);
-  if (error) throw error;
+  if (productsError) throw productsError;
+  
+  // Also update product_variants table for matching rows where color and size are null/empty
+  // This ensures export and other views stay in sync
+  // Use a filter that matches null or empty string for both color and size
+  const { data: variantRows, error: fetchError } = await supabase
+    .from('product_variants')
+    .select('id, color, size')
+    .eq('sku', sku)
+    .eq('location', location);
+  
+  if (!fetchError && variantRows) {
+    // Find rows where both color and size are null/empty
+    const baseVariants = variantRows.filter((v: { id: number; color: string | null; size: string | null }) => {
+      const c = (v.color || '').trim();
+      const s = (v.size || '').trim();
+      return c === '' && s === '';
+    });
+    
+    if (baseVariants.length > 0) {
+      const ids = baseVariants.map((v: { id: number }) => v.id);
+      const { error: variantsError } = await supabase
+        .from('product_variants')
+        .update({ on_hand_new: onHandNew })
+        .in('id', ids);
+      
+      if (variantsError) {
+        console.warn('Failed to update product_variants:', variantsError);
+      }
+    }
+  }
 }
 
 export async function updateCommittedQty(sku: string, location: string, committed: number): Promise<void> {
@@ -124,12 +155,41 @@ export async function updateCommittedQty(sku: string, location: string, committe
 
 export async function updateOnHandCurrent(sku: string, location: string, onHandCurrent: number): Promise<void> {
   if (!supabase) return;
-  const { error } = await supabase
+  // Update products table
+  const { error: productsError } = await supabase
     .from('products')
     .update({ on_hand_current: onHandCurrent })
     .eq('sku', sku)
     .eq('location', location);
-  if (error) throw error;
+  if (productsError) throw productsError;
+  
+  // Also update product_variants table for matching rows where color and size are null/empty
+  const { data: variantRows, error: fetchError } = await supabase
+    .from('product_variants')
+    .select('id, color, size')
+    .eq('sku', sku)
+    .eq('location', location);
+  
+  if (!fetchError && variantRows) {
+    // Find rows where both color and size are null/empty
+    const baseVariants = variantRows.filter((v: { id: number; color: string | null; size: string | null }) => {
+      const c = (v.color || '').trim();
+      const s = (v.size || '').trim();
+      return c === '' && s === '';
+    });
+    
+    if (baseVariants.length > 0) {
+      const ids = baseVariants.map((v: { id: number }) => v.id);
+      const { error: variantsError } = await supabase
+        .from('product_variants')
+        .update({ on_hand_current: onHandCurrent })
+        .in('id', ids);
+      
+      if (variantsError) {
+        console.warn('Failed to update product_variants on_hand_current:', variantsError);
+      }
+    }
+  }
 }
 
 export async function fetchProductBySkuLocation(sku: string, location?: string): Promise<Product | undefined> {
