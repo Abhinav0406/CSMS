@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { getCurrentSession } from '@/lib/auth';
-import { NavBar } from '@/components/NavBar';
 import { computeAvailable, handleReturn, Product } from '@/lib/inventory';
 import { ImageWithFallback } from '@/components/ImageWithFallback';
 import Link from 'next/link';
@@ -119,16 +118,11 @@ export default function ProductDetailPage() {
   if (!product) {
     return (
       <div className="space-y-4">
-        <NavBar />
-        <div className="card p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400">Product not found. Load data via import or connect to backend.</div>
-          <div className="mt-3 rounded bg-gray-50 dark:bg-gray-800/50 p-3 text-xs text-gray-600 dark:text-gray-400">
-            <div>Diagnostics</div>
-            <div>SKU: <span className="font-mono">{sku || '(empty)'}</span></div>
-            <div>Location (query): <span className="font-mono">{location || '(none)'}</span></div>
-            <div>Supabase configured: <span className="font-mono">{supabase ? 'yes' : 'NO'}</span></div>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="text-center">
+            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600 dark:border-brand-400 mb-4"></div>
+            <div className="text-gray-600 dark:text-gray-400">Loading product...</div>
           </div>
-          <Link href="/mv" className="btn-outline mt-4 inline-flex w-fit">Back to Master View</Link>
         </div>
       </div>
     );
@@ -142,12 +136,16 @@ export default function ProductDetailPage() {
     if (filterSize && s.toLowerCase() !== filterSize.toLowerCase()) return false;
     return true;
   });
+  // When variants exist, always use variant totals for consistency
   const variantCurrent = filteredVariants.reduce((a, v) => a + (Number(v.on_hand_current) || 0), 0);
   const variantNew = filteredVariants.reduce((a, v) => a + (Number(v.on_hand_new) || 0), 0);
   const variantCommitted = filteredVariants.reduce((a, v) => a + (Number((v as any).committed) || 0), 0);
-  const cardsOnHandCurrent = (filterColor || filterSize) ? variantCurrent : product.onHandCurrent;
-  const cardsOnHandNew = (filterColor || filterSize) ? variantNew : product.onHandNew;
-  const cardsCommitted = (filterColor || filterSize) ? variantCommitted : product.committed;
+  
+  // If variants exist, use variant totals; otherwise use product totals
+  const hasVariants = variants.length > 0;
+  const cardsOnHandCurrent = hasVariants ? variantCurrent : product.onHandCurrent;
+  const cardsOnHandNew = hasVariants ? variantNew : product.onHandNew;
+  const cardsCommitted = hasVariants ? variantCommitted : product.committed;
   const available = (cardsOnHandCurrent - cardsCommitted);
 
   const handleAddStock = async () => {
@@ -159,6 +157,44 @@ export default function ProductDetailPage() {
           add: i === idx ? (entries[i]?.add || 0) + locationQty : (entries[i]?.add || 0),
         }));
         setEntries(nextEntries);
+        
+        // Dynamically update locations with new stock
+        const updatedLocations = locations.map((r, i) => {
+          if (i === idx) {
+            return {
+              ...r,
+              onHandNew: (r.onHandNew || 0) + locationQty
+            };
+          }
+          return r;
+        });
+        setLocations(updatedLocations);
+        
+        // Update combined product totals immediately
+        const combined = combine(updatedLocations);
+        setProduct(combined);
+        
+        // Update variants if they exist
+        if (variants.length > 0) {
+          const updatedVariants = variants.map(v => {
+            if (v.location === selectedLocation) {
+              return {
+                ...v,
+                on_hand_new: (v.on_hand_new || 0) + locationQty
+              };
+            }
+            return v;
+          });
+          setVariants(updatedVariants);
+          
+          // Update variant edits to reflect changes
+          const updatedVariantEdits = { ...variantEdits };
+          updatedVariants.forEach(v => {
+            const key = variantKey(v);
+            updatedVariantEdits[key] = v.on_hand_new || 0;
+          });
+          setVariantEdits(updatedVariantEdits);
+        }
         
         // Track recent changes
         setRecentChanges(prev => {
@@ -184,11 +220,10 @@ export default function ProductDetailPage() {
   };
 
   return (
-    <div className={`space-y-4 ${variants.length === 0 ? 'pb-24 sm:pb-4' : ''}`}>
-      <NavBar />
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="card p-3 sm:p-4 md:col-span-1">
-          <ImageWithFallback src={product.fullImageUrl} alt={product.name} width={800} height={600} className="w-full max-w-xs mx-auto sm:max-w-none h-auto rounded" />
+    <div className="space-y-3 pb-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="card p-2 sm:p-3 md:col-span-1">
+          <ImageWithFallback src={product.fullImageUrl} alt={product.name} width={800} height={600} className="w-full max-w-[240px] mx-auto sm:max-w-[280px] h-auto rounded" />
           {!product.fullImageUrl && (
             <FetchImageByHandle handle={(product as any).handle} onFound={(url) => {
               if (!url) return;
@@ -203,29 +238,29 @@ export default function ProductDetailPage() {
               } catch {}
             }} />
           )}
-          <div className="mt-3 sm:mt-4">
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-gray-100">{product.name}</h2>
-            <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">SKU: {product.sku}</div>
+          <div className="mt-2">
+            <h2 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100 line-clamp-2">{product.name}</h2>
+            <div className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">SKU: {product.sku}</div>
           </div>
         </div>
 
-        <div className="card p-3 sm:p-4 md:col-span-2 space-y-3">
+        <div className="card p-2 sm:p-3 md:col-span-2 space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Inventory</h3>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Inventory</h3>
           </div>
           
           {/* Compact grid - 4 metrics in 2x2 */}
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-4 gap-1.5">
             <Breakdown label="Stock" value={cardsOnHandCurrent} />
             <Breakdown label="Available" value={available} />
             <Breakdown label="New" value={cardsOnHandNew} highlight />
             <Breakdown label="Committed" value={cardsCommitted} />
           </div>
 
-          <div className={`grid grid-cols-2 gap-2 sm:flex sm:flex-wrap ${variants.length === 0 ? 'hidden sm:flex' : ''}`}>
+          <div className={`grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap ${variants.length > 0 ? 'hidden' : ''}`}>
             {isEdit && (
               <button
-                className="btn-outline text-sm"
+                className="btn-outline text-xs py-1 px-2"
                 onClick={async () => {
                   // If variant is filtered, commit variant-level new to current, and sync products totals
                   if (filterColor || filterSize) {
@@ -331,7 +366,7 @@ export default function ProductDetailPage() {
             )}
             {isEdit && (
               <button
-                className="btn-primary text-sm"
+                className="btn-primary text-xs py-1 px-2"
                 onClick={() => {
                   setShowLocationModal(true);
                 }}
@@ -339,15 +374,15 @@ export default function ProductDetailPage() {
                 Add Stock
               </button>
             )}
-            <Link href="/mv" className="btn-outline text-sm">Back to Master View</Link>
+            <Link href="/mv" className="btn-outline text-xs py-1 px-2">Back</Link>
           </div>
 
           {/* Recent Changes Log */}
           {recentChanges.length > 0 && (
-            <div className="mt-4">
-              <h4 className="mb-2 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Recent Changes</h4>
-              <div className="bg-gray-50 dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700 p-3">
-                <div className="space-y-1.5 max-h-32 overflow-y-auto">
+            <div className="mt-2">
+              <h4 className="mb-1.5 text-[10px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Recent Changes</h4>
+              <div className="bg-gray-50 dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700 p-2">
+                <div className="space-y-1 max-h-24 overflow-y-auto">
                   {recentChanges.map((change, idx) => (
                     <div key={idx} className="text-xs flex items-center justify-between py-1 border-b border-gray-200 dark:border-gray-700 last:border-0">
                       <div className="flex items-center gap-2">
@@ -389,8 +424,8 @@ export default function ProductDetailPage() {
 
           {/* Hide per-location totals when a specific variant is selected to avoid confusion */}
           {!filterColor && !filterSize && (
-            <div className="mt-3">
-              <h4 className="mb-2 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Locations</h4>
+            <div className="mt-2">
+              <h4 className="mb-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Locations</h4>
               <PerLocationEditor
                 rows={locations}
                 entries={entries}
@@ -407,8 +442,8 @@ export default function ProductDetailPage() {
 
           {/* Variant grid (Color/Size per location) */}
           {variants.length > 0 && (
-            <div className="mt-4">
-              <h4 className="mb-2 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Variants</h4>
+            <div className="mt-2">
+              <h4 className="mb-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Variants</h4>
               {(filterColor || filterSize) && (
                 <div className="mb-2 text-xs text-gray-600 dark:text-gray-400">Showing: {filterColor || '—'} {filterColor && filterSize ? '•' : ''} {filterSize || ''}</div>
               )}
@@ -464,7 +499,7 @@ export default function ProductDetailPage() {
                 </table>
               </div>
               {isEdit && (
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-2 flex items-center gap-2 justify-end">
                   <button
                     className="btn-primary text-xs py-1.5 px-3"
                     onClick={async () => {
@@ -501,12 +536,11 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
-      {/* Mobile floating buttons when no variants */}
-      {variants.length === 0 && (
-        <div className="fixed bottom-16 left-4 right-4 sm:hidden z-40 flex gap-2">
+      {/* Mobile buttons - static at bottom */}
+      <div className="mt-6 grid grid-cols-2 gap-2 sm:hidden">
             {isEdit && (
               <button
-                className="btn-outline text-xs px-2 py-1.5 flex-1 shadow-lg"
+                className="btn-outline text-xs px-2 py-1.5 shadow-lg"
                 onClick={async () => {
                   const updatedRows: Product[] = [];
                   for (const r of locations) {
@@ -548,9 +582,8 @@ export default function ProductDetailPage() {
                 Add Stock
               </button>
             )}
-            <Link href="/mv" className="btn-outline text-xs px-2 py-1.5 shadow-lg">Back</Link>
-        </div>
-      )}
+            <Link href="/mv" className="btn-outline text-xs px-2 py-1.5 shadow-lg col-span-2">Back</Link>
+      </div>
 
       {/* Location Selection Modal */}
       {showLocationModal && (
@@ -748,7 +781,7 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
         </tbody>
       </table>
       {isEdit && (
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2 justify-end">
           <button
             className="btn-primary text-xs py-1.5 px-3"
             onClick={async () => {
@@ -809,9 +842,9 @@ function FetchImageByHandle({ handle, onFound }: { handle?: string; onFound: (ur
 
 function Breakdown({ label, value, highlight }: { label: string; value: number; highlight?: boolean }) {
   return (
-    <div className={`rounded border p-2 ${highlight ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700'}`}>
-      <div className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</div>
-      <div className="text-xl font-bold tabular-nums text-gray-900 dark:text-gray-100 mt-0.5">{value}</div>
+    <div className={`rounded border p-1.5 ${highlight ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700'}`}>
+      <div className="text-[9px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</div>
+      <div className="text-base font-bold tabular-nums text-gray-900 dark:text-gray-100">{value}</div>
     </div>
   );
 }
