@@ -1,10 +1,14 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import { getCurrentSession } from '@/lib/auth';
 import { NavBar } from '@/components/NavBar';
 import { ProductTable } from '@/components/ProductTable';
+
+function ProductTableWrapper() {
+  return <ProductTable initialProducts={[]} />;
+}
 
 export default function MasterViewPage() {
   const router = useRouter();
@@ -21,7 +25,9 @@ export default function MasterViewPage() {
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Master View</h2>
       </div>
-      <ProductTable initialProducts={[]} />
+      <Suspense fallback={<div className="text-sm text-gray-600">Loading...</div>}>
+        <ProductTableWrapper />
+      </Suspense>
       <div className="text-sm text-gray-600">
         Import your Shopify CSV to begin. Only Edit users can import/export.
       </div>

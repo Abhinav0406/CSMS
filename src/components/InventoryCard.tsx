@@ -17,6 +17,7 @@ export type InventoryCardProps = {
   committed: number;
   color?: string | null;
   size?: string | null;
+  href?: string; // Optional custom href for navigation with page preservation
 };
 
 export function InventoryCard(props: InventoryCardProps) {
@@ -41,7 +42,7 @@ export function InventoryCard(props: InventoryCardProps) {
     })();
   }, [props.handle, src]);
 
-  const href = `/product/${encodeURIComponent(props.sku)}?location=${encodeURIComponent(props.location || '')}&color=${encodeURIComponent(props.color || '')}&size=${encodeURIComponent(props.size || '')}`;
+  const href = props.href || `/product/${encodeURIComponent(props.sku)}?location=${encodeURIComponent(props.location || '')}&color=${encodeURIComponent(props.color || '')}&size=${encodeURIComponent(props.size || '')}`;
 
   return (
     <Link 

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState, useRef } from 'react';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import Image from 'next/image';
 import { Product, computeAvailable, computeTotal } from '@/lib/inventory';
 // QuantityAdjuster removed per latest requirements; table is read-only
@@ -17,11 +18,19 @@ interface Props {
 }
 
 export function ProductTable({ initialProducts }: Props) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const [isEdit, setIsEdit] = useState<boolean>(false);
   const [rows, setRows] = useState<Product[]>(initialProducts);
   const STORAGE_KEY = 'csms_products_v1';
   const PAGE_SIZE = 50;
-  const [page, setPage] = useState<number>(1);
+  // Initialize page from URL params, fallback to 1
+  const [page, setPage] = useState<number>(() => {
+    if (typeof window === 'undefined') return 1;
+    const pageParam = new URLSearchParams(window.location.search).get('page');
+    return pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
+  });
   const [query, setQuery] = useState<string>('');
   const [availability, setAvailability] = useState<'all' | 'in' | 'out'>('all');
   const [selectedPrefix, setSelectedPrefix] = useState<string>('');
@@ -273,9 +282,57 @@ export function ProductTable({ initialProducts }: Props) {
     return result;
   }, [filtered, page]);
 
-  useEffect(() => { 
-    setPage(1); 
+  // Sync page when URL params change (e.g., when returning via browser back button)
+  useEffect(() => {
+    const pageParam = searchParams?.get('page');
+    const newPage = pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
+    setPage((prevPage) => {
+      // Only update if URL has different page value
+      if (prevPage !== newPage) {
+        return newPage;
+      }
+      return prevPage;
+    });
+  }, [searchParams]);
+
+  // Reset page to 1 when filters change (but not when URL changes)
+  const prevFiltersRef = useRef({ query, availability, groupBy, selectedPrefix });
+  useEffect(() => {
+    const filtersChanged = 
+      prevFiltersRef.current.query !== query ||
+      prevFiltersRef.current.availability !== availability ||
+      prevFiltersRef.current.groupBy !== groupBy ||
+      prevFiltersRef.current.selectedPrefix !== selectedPrefix;
+    
+    if (filtersChanged) {
+      setPage(1);
+      prevFiltersRef.current = { query, availability, groupBy, selectedPrefix };
+    }
   }, [query, availability, groupBy, selectedPrefix]);
+
+  // Sync page changes with URL params
+  useEffect(() => {
+    if (!pathname || !router) return;
+    const currentPageParam = searchParams?.get('page');
+    const currentPageInUrl = currentPageParam ? parseInt(currentPageParam, 10) : 1;
+    
+    // Only update URL if page state differs from URL
+    if (page !== currentPageInUrl) {
+      const params = new URLSearchParams(searchParams?.toString() || '');
+      if (page > 1) {
+        params.set('page', page.toString());
+      } else {
+        params.delete('page');
+      }
+      const newUrl = `${pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+      router.replace(newUrl, { scroll: false });
+    }
+  }, [page, pathname, router, searchParams]);
+
+  // Helper to update page and sync with URL
+  const updatePage = (newPage: number) => {
+    setPage(Math.max(1, Math.min(newPage, filteredPageCount)));
+  };
 
 
   const exportCsv = async () => {
@@ -653,22 +710,22 @@ export function ProductTable({ initialProducts }: Props) {
           {query.trim() ? `Found ${filtered.length} of ${aggregated.length} items` : `${filtered.length} items`}
         </div>
         <div className="flex items-center gap-1">
-          <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage(1)} disabled={page === 1} title="First">
+          <button className="btn-outline text-xs px-2 py-1" onClick={() => updatePage(1)} disabled={page === 1} title="First">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
             </svg>
           </button>
-          <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} title="Previous">
+          <button className="btn-outline text-xs px-2 py-1" onClick={() => updatePage(page - 1)} disabled={page === 1} title="Previous">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage((p) => Math.min(filteredPageCount, p + 1))} disabled={page === filteredPageCount} title="Next">
+          <button className="btn-outline text-xs px-2 py-1" onClick={() => updatePage(page + 1)} disabled={page === filteredPageCount} title="Next">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </button>
-          <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage(filteredPageCount)} disabled={page === filteredPageCount} title="Last">
+          <button className="btn-outline text-xs px-2 py-1" onClick={() => updatePage(filteredPageCount)} disabled={page === filteredPageCount} title="Last">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
             </svg>
@@ -821,6 +878,13 @@ export function ProductTable({ initialProducts }: Props) {
           const available = p.onHandCurrent - p.committed;
           const sample = sampleBySku.get(p.sku);
           const imageUrl = (sample?.fullImageUrl || sample?.smallImageUrl) as any;
+          // Preserve current page in URL for mobile navigation too
+          const params = new URLSearchParams();
+          params.set('location', (p as any).location || '');
+          if (p.color) params.set('color', p.color);
+          if (p.size) params.set('size', p.size);
+          if (page > 1) params.set('fromPage', page.toString());
+          const productHref = `/product/${encodeURIComponent(p.sku)}?${params.toString()}`;
           return (
             <InventoryCard
               key={`${p.sku}__${p.variant || ''}__${page}`}
@@ -835,6 +899,7 @@ export function ProductTable({ initialProducts }: Props) {
               committed={p.committed}
               color={p.color}
               size={p.size}
+              href={productHref}
             />
           );
         })}
@@ -859,7 +924,13 @@ export function ProductTable({ initialProducts }: Props) {
             {data.map((p) => {
               const available = p.onHandCurrent - p.committed;
               const sample = sampleBySku.get(p.sku);
-              const productHref = `/product/${encodeURIComponent(p.sku)}?location=${encodeURIComponent((p as any).location || '')}&color=${encodeURIComponent(p.color || '')}&size=${encodeURIComponent(p.size || '')}`;
+              // Preserve current page in URL when navigating to product detail
+              const params = new URLSearchParams();
+              params.set('location', (p as any).location || '');
+              if (p.color) params.set('color', p.color);
+              if (p.size) params.set('size', p.size);
+              if (page > 1) params.set('fromPage', page.toString());
+              const productHref = `/product/${encodeURIComponent(p.sku)}?${params.toString()}`;
               return (
                 <Link key={`${p.sku}__${p.variant || ''}__${page}`} href={productHref} className="contents">
                   <tr className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
@@ -881,23 +952,23 @@ export function ProductTable({ initialProducts }: Props) {
         </table>
       </div>
       <div className="flex items-center justify-center gap-2 p-2 sm:p-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-        <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage(1)} disabled={page === 1} title="First">
+        <button className="btn-outline text-xs px-2 py-1" onClick={() => updatePage(1)} disabled={page === 1} title="First">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
           </svg>
         </button>
-        <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} title="Previous">
+        <button className="btn-outline text-xs px-2 py-1" onClick={() => updatePage(page - 1)} disabled={page === 1} title="Previous">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
         <span className="text-xs text-gray-600 dark:text-gray-400 px-2">{page} / {pageCount}</span>
-        <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={page === pageCount} title="Next">
+        <button className="btn-outline text-xs px-2 py-1" onClick={() => updatePage(page + 1)} disabled={page === pageCount} title="Next">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
         </button>
-        <button className="btn-outline text-xs px-2 py-1" onClick={() => setPage(pageCount)} disabled={page === pageCount} title="Last">
+        <button className="btn-outline text-xs px-2 py-1" onClick={() => updatePage(pageCount)} disabled={page === pageCount} title="Last">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
           </svg>

@@ -5,7 +5,6 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { getCurrentSession } from '@/lib/auth';
 import { computeAvailable, handleReturn, Product } from '@/lib/inventory';
 import { ImageWithFallback } from '@/components/ImageWithFallback';
-import Link from 'next/link';
 import { fetchProductBySkuLocation, fetchProductsBySku } from '@/lib/productsApi';
 import { updateOnHandNew, updateOnHandCurrent } from '@/lib/productsApi';
 import { supabase } from '@/lib/supabaseClient';
@@ -257,126 +256,6 @@ export default function ProductDetailPage() {
             <Breakdown label="Committed" value={cardsCommitted} />
           </div>
 
-          <div className={`grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap ${variants.length > 0 ? 'hidden' : ''}`}>
-            {isEdit && (
-              <button
-                className="btn-outline text-xs py-1 px-2"
-                onClick={async () => {
-                  // If variant is filtered, commit variant-level new to current, and sync products totals
-                  if (filterColor || filterSize) {
-                    const deltasByLoc = new Map<string, number>();
-                    const updatedVariants = [...variants];
-                    for (let i = 0; i < updatedVariants.length; i++) {
-                      const v = updatedVariants[i];
-                      const c = (v.color || '').trim();
-                      const s = (v.size || '').trim();
-                      if (filterColor && c.toLowerCase() !== filterColor.toLowerCase()) continue;
-                      if (filterSize && s.toLowerCase() !== filterSize.toLowerCase()) continue;
-                      
-                      const delta = Number(v.on_hand_new || 0);
-                      const newCurrent = Number(v.on_hand_current || 0) + delta;
-                      try {
-                        await supabase
-                          .from('product_variants')
-                          .update({ on_hand_current: newCurrent, on_hand_new: 0 })
-                          .eq('sku', sku)
-                          .eq('location', v.location)
-                          .eq('color', v.color ?? '')
-                          .eq('size', v.size ?? '');
-                      } catch {}
-                      updatedVariants[i] = { ...v, on_hand_current: newCurrent, on_hand_new: 0 };
-                      deltasByLoc.set(v.location, (deltasByLoc.get(v.location) || 0) + delta);
-                    }
-                    setVariants(updatedVariants);
-                    // Update variantEdits state
-                    const updatedEdits = { ...variantEdits };
-                    updatedVariants.forEach(v => {
-                      const key = variantKey(v);
-                      updatedEdits[key] = 0;
-                    });
-                    setVariantEdits(updatedEdits);
-                    
-                    // Update products per location using accumulated deltas
-                    const updated: Product[] = [];
-                    for (const r of locations) {
-                      const delta = deltasByLoc.get(r.location) || 0;
-                      if (delta === 0) { updated.push(r); continue; }
-                      const newCurrent = (r.onHandCurrent || 0) + delta;
-                      try {
-                        await updateOnHandCurrent(r.sku, r.location, newCurrent);
-                        await updateOnHandNew(r.sku, r.location, 0);
-                      } catch {}
-                      updated.push({ ...r, onHandCurrent: newCurrent, onHandNew: 0 });
-                    }
-                    setLocations(updated);
-                    const combined = combine(updated);
-                    setProduct(combined);
-                    return;
-                  }
-
-                  // No variant filter → commit per-location planned totals
-                  const updatedRows: Product[] = [];
-                  for (const r of locations) {
-                    const delta = r.onHandNew || 0;
-                    const newCurrent = (r.onHandCurrent || 0) + delta;
-                    try {
-                      await updateOnHandCurrent(r.sku, r.location, newCurrent);
-                      await updateOnHandNew(r.sku, r.location, 0);
-                    } catch {}
-                    updatedRows.push({ ...r, onHandCurrent: newCurrent, onHandNew: 0 });
-                  }
-                  setLocations(updatedRows);
-                  const combined = combine(updatedRows);
-                  setProduct(combined);
-                  
-                  // Also update variants if they exist
-                  if (variants.length > 0) {
-                    const updatedVariants = variants.map(v => {
-                      const locMatch = updatedRows.find(r => r.location === v.location);
-                      if (locMatch) {
-                        return { ...v, on_hand_current: locMatch.onHandCurrent as number, on_hand_new: 0 };
-                      }
-                      return v;
-                    });
-                    setVariants(updatedVariants);
-                    // Update variantEdits state
-                    const updatedEdits = { ...variantEdits };
-                    updatedVariants.forEach(v => {
-                      const key = variantKey(v);
-                      updatedEdits[key] = 0;
-                    });
-                    setVariantEdits(updatedEdits);
-                  }
-                  try {
-                    const raw = localStorage.getItem(STORAGE_KEY);
-                    if (raw) {
-                      const list = JSON.parse(raw) as Product[];
-                      const nextList = list.map((p) => {
-                        if (p.sku !== product.sku) return p;
-                        const match = updatedRows.find((r) => r.sku === p.sku && r.location === p.location);
-                        return match ? { ...p, onHandCurrent: match.onHandCurrent, onHandNew: 0 } : p;
-                      });
-                      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
-                    }
-                  } catch {}
-                }}
-              >
-                Set On hand (new) = current
-              </button>
-            )}
-            {isEdit && (
-              <button
-                className="btn-primary text-xs py-1 px-2"
-                onClick={() => {
-                  setShowLocationModal(true);
-                }}
-              >
-                Add Stock
-              </button>
-            )}
-            <Link href="/mv" className="btn-outline text-xs py-1 px-2">Back</Link>
-          </div>
-
           {/* Recent Changes Log */}
           {recentChanges.length > 0 && (
             <div className="mt-2">
@@ -536,8 +415,9 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
-      {/* Mobile buttons - static at bottom */}
-      <div className="mt-6 grid grid-cols-2 gap-2 sm:hidden">
+      {/* Mobile buttons - static at bottom - only show for non-variant products */}
+      {variants.length === 0 && (
+        <div className="mt-6 grid grid-cols-2 gap-2 sm:hidden">
             {isEdit && (
               <button
                 className="btn-outline text-xs px-2 py-1.5 shadow-lg"
@@ -582,8 +462,8 @@ export default function ProductDetailPage() {
                 Add Stock
               </button>
             )}
-            <Link href="/mv" className="btn-outline text-xs px-2 py-1.5 shadow-lg col-span-2">Back</Link>
-      </div>
+        </div>
+      )}
 
       {/* Location Selection Modal */}
       {showLocationModal && (
