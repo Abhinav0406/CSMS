@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { getCurrentSession } from '@/lib/auth';
 import { computeAvailable, handleReturn, Product } from '@/lib/inventory';
 import { ImageWithFallback } from '@/components/ImageWithFallback';
@@ -219,10 +220,23 @@ export default function ProductDetailPage() {
   };
 
   return (
-    <div className="space-y-3 pb-4">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <div className="card p-2 sm:p-3 md:col-span-1">
-          <ImageWithFallback src={product.fullImageUrl} alt={product.name} width={800} height={600} className="w-full max-w-[240px] mx-auto sm:max-w-[280px] h-auto rounded" />
+    <div className="space-y-4 pb-4 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      {/* Desktop Back Button */}
+      <div className="hidden sm:block mb-4">
+        <Link 
+          href="/mv" 
+          className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to Master View
+        </Link>
+      </div>
+      
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 lg:gap-6">
+        <div className="card p-3 sm:p-4 lg:p-6 md:col-span-1">
+          <ImageWithFallback src={product.fullImageUrl} alt={product.name} width={800} height={600} className="w-full max-w-[240px] mx-auto sm:max-w-[320px] lg:max-w-[400px] h-auto rounded" />
           {!product.fullImageUrl && (
             <FetchImageByHandle handle={(product as any).handle} onFound={(url) => {
               if (!url) return;
@@ -237,15 +251,15 @@ export default function ProductDetailPage() {
               } catch {}
             }} />
           )}
-          <div className="mt-2">
-            <h2 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100 line-clamp-2">{product.name}</h2>
-            <div className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">SKU: {product.sku}</div>
+          <div className="mt-3 sm:mt-4">
+            <h2 className="text-base sm:text-lg lg:text-xl font-semibold text-gray-900 dark:text-gray-100 line-clamp-2">{product.name}</h2>
+            <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">SKU: {product.sku}</div>
           </div>
         </div>
 
-        <div className="card p-2 sm:p-3 md:col-span-2 space-y-2">
+        <div className="card p-3 sm:p-4 lg:p-6 md:col-span-2 space-y-3 lg:space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Inventory</h3>
+            <h3 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-gray-100">Inventory</h3>
           </div>
           
           {/* Compact grid - 4 metrics in 2x2 */}

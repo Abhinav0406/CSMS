@@ -26,11 +26,17 @@ export function ProductTable({ initialProducts }: Props) {
   const STORAGE_KEY = 'csms_products_v1';
   const PAGE_SIZE = 50;
   // Initialize page from URL params, fallback to 1
-  const [page, setPage] = useState<number>(() => {
+  const getInitialPage = () => {
     if (typeof window === 'undefined') return 1;
-    const pageParam = new URLSearchParams(window.location.search).get('page');
-    return pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
-  });
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const pageParam = urlParams.get('page');
+      return pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
+    } catch {
+      return 1;
+    }
+  };
+  const [page, setPage] = useState<number>(getInitialPage);
   const [query, setQuery] = useState<string>('');
   const [availability, setAvailability] = useState<'all' | 'in' | 'out'>('all');
   const [selectedPrefix, setSelectedPrefix] = useState<string>('');
@@ -282,22 +288,31 @@ export function ProductTable({ initialProducts }: Props) {
     return result;
   }, [filtered, page]);
 
-  // Sync page when URL params change (e.g., when returning via browser back button)
+  // Sync page from URL params when they change (e.g., browser back button)
   useEffect(() => {
-    const pageParam = searchParams?.get('page');
-    const newPage = pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
-    setPage((prevPage) => {
-      // Only update if URL has different page value
-      if (prevPage !== newPage) {
-        return newPage;
+    if (!searchParams) return;
+    const pageParam = searchParams.get('page');
+    const urlPage = pageParam ? Math.max(1, parseInt(pageParam, 10)) : 1;
+    
+    // Update page state if URL differs (but only if it's a meaningful change)
+    setPage((currentPage) => {
+      if (currentPage !== urlPage) {
+        return urlPage;
       }
-      return prevPage;
+      return currentPage;
     });
   }, [searchParams]);
 
-  // Reset page to 1 when filters change (but not when URL changes)
-  const prevFiltersRef = useRef({ query, availability, groupBy, selectedPrefix });
+  // Reset page to 1 when filters change (but not on initial mount or URL navigation)
+  const prevFiltersRef = useRef({ query, availability, groupBy, selectedPrefix, initialized: false });
   useEffect(() => {
+    // Skip on initial mount to preserve URL page
+    if (!prevFiltersRef.current.initialized) {
+      prevFiltersRef.current = { query, availability, groupBy, selectedPrefix, initialized: true };
+      return;
+    }
+    
+    // Only reset if filters actually changed
     const filtersChanged = 
       prevFiltersRef.current.query !== query ||
       prevFiltersRef.current.availability !== availability ||
@@ -306,19 +321,20 @@ export function ProductTable({ initialProducts }: Props) {
     
     if (filtersChanged) {
       setPage(1);
-      prevFiltersRef.current = { query, availability, groupBy, selectedPrefix };
+      prevFiltersRef.current = { query, availability, groupBy, selectedPrefix, initialized: true };
     }
   }, [query, availability, groupBy, selectedPrefix]);
 
-  // Sync page changes with URL params
+  // Sync page changes to URL (debounced to avoid conflicts)
   useEffect(() => {
-    if (!pathname || !router) return;
-    const currentPageParam = searchParams?.get('page');
-    const currentPageInUrl = currentPageParam ? parseInt(currentPageParam, 10) : 1;
+    if (!pathname || !router || !searchParams) return;
     
-    // Only update URL if page state differs from URL
-    if (page !== currentPageInUrl) {
-      const params = new URLSearchParams(searchParams?.toString() || '');
+    const urlPageParam = searchParams.get('page');
+    const urlPage = urlPageParam ? parseInt(urlPageParam, 10) : 1;
+    
+    // If page state differs from URL, update URL
+    if (page !== urlPage) {
+      const params = new URLSearchParams(searchParams.toString());
       if (page > 1) {
         params.set('page', page.toString());
       } else {
