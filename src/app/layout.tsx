@@ -47,6 +47,25 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 if (shouldBeDark) {
                   document.documentElement.classList.add('dark');
                 }
+                
+                // Remove Vercel floating badge
+                function removeVercelBadge() {
+                  const vercelElements = document.querySelectorAll('#__vercel, [data-vercel-badge], iframe[src*="vercel"], [class*="vercel"], [id*="vercel"]');
+                  vercelElements.forEach(el => el.remove());
+                  
+                  // Also check for elements in shadow DOM or dynamically added
+                  const observer = new MutationObserver(() => {
+                    const newVercelElements = document.querySelectorAll('#__vercel, [data-vercel-badge], iframe[src*="vercel"], [class*="vercel"], [id*="vercel"]');
+                    newVercelElements.forEach(el => el.remove());
+                  });
+                  observer.observe(document.body, { childList: true, subtree: true });
+                }
+                
+                if (document.readyState === 'loading') {
+                  document.addEventListener('DOMContentLoaded', removeVercelBadge);
+                } else {
+                  removeVercelBadge();
+                }
               })();
             `,
           }}

@@ -44,4 +44,16 @@ select.input option {
   .name{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 }
 
+/* Hide Vercel floating badge/indicator */
+#__vercel,
+[data-vercel-badge],
+iframe[src*="vercel"],
+[class*="vercel"],
+[id*="vercel"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 

@@ -27,5 +27,4 @@ dist-ssr
 .env.new
 
 .next
-
-
+scripts/supabase_schema.sql

@@ -234,6 +234,19 @@ export default function ProductDetailPage() {
         </Link>
       </div>
       
+      {/* Mobile Back Button */}
+      <div className="sm:hidden mb-3">
+        <button
+          onClick={() => router.back()}
+          className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back
+        </button>
+      </div>
+      
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3 lg:gap-6">
         <div className="card p-3 sm:p-4 lg:p-6 md:col-span-1">
           <ImageWithFallback src={product.fullImageUrl} alt={product.name} width={800} height={600} className="w-full max-w-[240px] mx-auto sm:max-w-[320px] lg:max-w-[400px] h-auto rounded" />
@@ -268,6 +281,54 @@ export default function ProductDetailPage() {
             <Breakdown label="Available" value={available} />
             <Breakdown label="New" value={cardsOnHandNew} highlight />
             <Breakdown label="Committed" value={cardsCommitted} />
+          </div>
+
+          {/* Desktop buttons - show for all products */}
+          <div className="hidden sm:flex gap-2 mt-3">
+              {isEdit && (
+                <button
+                  className="btn-outline text-sm px-4 py-2"
+                  onClick={async () => {
+                    const updatedRows: Product[] = [];
+                    for (const r of locations) {
+                      const delta = r.onHandNew || 0;
+                      const newCurrent = (r.onHandCurrent || 0) + delta;
+                      try {
+                        await updateOnHandCurrent(r.sku, r.location, newCurrent);
+                        await updateOnHandNew(r.sku, r.location, 0);
+                      } catch {}
+                      updatedRows.push({ ...r, onHandCurrent: newCurrent, onHandNew: 0 });
+                    }
+                    setLocations(updatedRows);
+                    const combined = combine(updatedRows);
+                    setProduct(combined);
+                    try {
+                      const raw = localStorage.getItem(STORAGE_KEY);
+                      if (raw) {
+                        const list = JSON.parse(raw) as Product[];
+                        const nextList = list.map((p) => {
+                          if (p.sku !== product.sku) return p;
+                          const match = updatedRows.find((r) => r.sku === p.sku && r.location === p.location);
+                          return match ? { ...p, onHandCurrent: match.onHandCurrent, onHandNew: 0 } : p;
+                        });
+                        localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
+                      }
+                    } catch {}
+                  }}
+                >
+                  Set On hand (new) = current
+                </button>
+              )}
+              {isEdit && (
+                <button
+                  className="btn-primary text-sm px-4 py-2"
+                  onClick={() => {
+                    setShowLocationModal(true);
+                  }}
+                >
+                  Add Stock
+                </button>
+              )}
           </div>
 
           {/* Recent Changes Log */}
@@ -429,9 +490,8 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
-      {/* Mobile buttons - static at bottom - only show for non-variant products */}
-      {variants.length === 0 && (
-        <div className="mt-6 grid grid-cols-2 gap-2 sm:hidden">
+      {/* Mobile buttons - static at bottom - show for all products */}
+      <div className="mt-6 grid grid-cols-2 gap-2 sm:hidden">
             {isEdit && (
               <button
                 className="btn-outline text-xs px-2 py-1.5 shadow-lg"
@@ -476,8 +536,7 @@ export default function ProductDetailPage() {
                 Add Stock
               </button>
             )}
-        </div>
-      )}
+      </div>
 
       {/* Location Selection Modal */}
       {showLocationModal && (
