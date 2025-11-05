@@ -30,17 +30,17 @@ export function InventoryCard(props: InventoryCardProps) {
   useEffect(() => {
     if (src || !props.handle) return;
     // Check cache first
-    const cached = getCachedImageUrl(props.handle);
+    const cached = getCachedImageUrl(props.handle, props.color || undefined, props.size || undefined);
     if (cached !== undefined) {
       setSrc(cached || undefined);
       return;
     }
     // Fetch and cache if not found
     (async () => {
-      const url = await fetchAndCacheImageUrl(props.handle!);
+      const url = await fetchAndCacheImageUrl(props.handle!, props.color || undefined, props.size || undefined);
       if (url) setSrc(url);
     })();
-  }, [props.handle, src]);
+  }, [props.handle, props.color, props.size, src]);
 
   const href = props.href || `/product/${encodeURIComponent(props.sku)}?location=${encodeURIComponent(props.location || '')}&color=${encodeURIComponent(props.color || '')}&size=${encodeURIComponent(props.size || '')}`;
 

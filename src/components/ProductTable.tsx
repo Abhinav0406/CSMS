@@ -1103,7 +1103,7 @@ export function ProductTable({ initialProducts }: Props) {
                 <Link key={`${p.sku}__${p.variant || ''}__${page}`} href={productHref} className="contents">
                   <tr className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
                     <td className="px-2 py-2 align-middle">
-                    <Thumb handle={(sample as any)?.handle} url={(sample?.smallImageUrl || sample?.fullImageUrl) as any} name={p.name} />
+                    <Thumb handle={(sample as any)?.handle} o1={p.color || undefined} o2={p.size || undefined} url={(sample?.smallImageUrl || sample?.fullImageUrl) as any} name={p.name} />
                   </td>
                     <td className="px-2 py-2 text-sm font-medium text-gray-900 dark:text-gray-100 align-middle">{p.name}</td>
                     <td className="px-2 py-2 text-xs text-gray-700 dark:text-gray-300 align-middle">{p.sku}</td>
@@ -1146,7 +1146,7 @@ export function ProductTable({ initialProducts }: Props) {
   );
 }
 
-function Thumb({ handle, url, name }: { handle?: string; url?: string; name: string }) {
+function Thumb({ handle, o1, o2, o3, url, name }: { handle?: string; o1?: string; o2?: string; o3?: string; url?: string; name: string }) {
   const [src, setSrc] = useState<string | undefined>(url);
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
@@ -1155,17 +1155,17 @@ function Thumb({ handle, url, name }: { handle?: string; url?: string; name: str
   useEffect(() => {
     if (src || !handle) return;
     // Check cache first
-    const cached = getCachedImageUrl(handle);
+    const cached = getCachedImageUrl(handle, o1, o2, o3);
     if (cached !== undefined) {
       setSrc(cached || undefined);
       return;
     }
     // Fetch and cache if not found
     (async () => {
-      const imageUrl = await fetchAndCacheImageUrl(handle);
+      const imageUrl = await fetchAndCacheImageUrl(handle, o1, o2, o3);
       if (imageUrl) setSrc(imageUrl);
     })();
-  }, [handle, src]);
+  }, [handle, o1, o2, o3, src]);
   const fallback = `data:image/svg+xml;utf8,${encodeURIComponent(
     "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 40 40'><rect width='100%' height='100%' fill='#f3f4f6'/></svg>"
   )}`;

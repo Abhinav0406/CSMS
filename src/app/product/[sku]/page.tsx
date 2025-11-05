@@ -251,7 +251,7 @@ export default function ProductDetailPage() {
         <div className="card p-3 sm:p-4 lg:p-6 md:col-span-1">
           <ImageWithFallback src={product.fullImageUrl} alt={product.name} width={800} height={600} className="w-full max-w-[240px] mx-auto sm:max-w-[320px] lg:max-w-[400px] h-auto rounded" />
           {!product.fullImageUrl && (
-            <FetchImageByHandle handle={(product as any).handle} onFound={(url) => {
+            <FetchImageByHandle handle={(product as any).handle} o1={filterColor || undefined} o2={filterSize || undefined} onFound={(url) => {
               if (!url) return;
               setProduct((prev) => (prev ? { ...prev, fullImageUrl: url } : prev));
               try {
@@ -802,24 +802,24 @@ function PerLocationEditor({ rows, entries, setEntries, isEdit, onSaved }: { row
   );
 }
 
-function FetchImageByHandle({ handle, onFound }: { handle?: string; onFound: (url: string | null) => void }) {
+function FetchImageByHandle({ handle, o1, o2, o3, onFound }: { handle?: string; o1?: string; o2?: string; o3?: string; onFound: (url: string | null) => void }) {
   const [done, setDone] = useState(false);
   useEffect(() => {
     if (!handle || done) return;
     (async () => {
       // Check cache first
-      const cached = getCachedImageUrl(handle);
+      const cached = getCachedImageUrl(handle, o1, o2, o3);
       if (cached !== undefined) {
         onFound(cached);
         setDone(true);
         return;
       }
       // Fetch and cache if not found
-      const url = await fetchAndCacheImageUrl(handle);
+      const url = await fetchAndCacheImageUrl(handle, o1, o2, o3);
       onFound(url);
       setDone(true);
     })();
-  }, [handle, done, onFound]);
+  }, [handle, o1, o2, o3, done, onFound]);
   return null;
 }
 

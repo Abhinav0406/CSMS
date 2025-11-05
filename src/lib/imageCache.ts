@@ -1,20 +1,26 @@
 // Centralized image cache to avoid repeated API calls
-const CACHE_KEY = 'csms_image_cache_v1';
+const CACHE_KEY = 'csms_image_cache_v2';
 const CACHE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 interface ImageCacheEntry {
-  handle: string;
+  key: string; // handle|o1|o2|o3
   firstImageUrl: string | null;
   images: string[];
   timestamp: number;
 }
 
-interface ImageCache {
-  [handle: string]: ImageCacheEntry;
-}
+interface ImageCache { [key: string]: ImageCacheEntry }
 
 // In-memory cache
 const memoryCache = new Map<string, ImageCacheEntry>();
+
+function buildKey(handle: string, o1?: string | null, o2?: string | null, o3?: string | null): string {
+  const a = (handle || '').trim();
+  const b = (o1 || '').trim().toLowerCase();
+  const c = (o2 || '').trim().toLowerCase();
+  const d = (o3 || '').trim().toLowerCase();
+  return `${a}|${b}|${c}|${d}`;
+}
 
 // Load from localStorage
 function loadCache(): ImageCache {
@@ -43,34 +49,35 @@ function loadCache(): ImageCache {
 }
 
 // Save to localStorage
-function saveCache(handle: string, entry: ImageCacheEntry): void {
+function saveCache(key: string, entry: ImageCacheEntry): void {
   if (typeof window === 'undefined') return;
   try {
     const cache = loadCache();
-    cache[handle] = entry;
+    cache[key] = entry;
     localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
-    memoryCache.set(handle, entry);
+    memoryCache.set(key, entry);
   } catch {}
 }
 
 // Get cached image URL
-export function getCachedImageUrl(handle: string): string | null | undefined {
+export function getCachedImageUrl(handle: string, o1?: string | null, o2?: string | null, o3?: string | null): string | null | undefined {
+  const key = buildKey(handle, o1, o2, o3);
   // Check memory cache first
-  const memEntry = memoryCache.get(handle);
+  const memEntry = memoryCache.get(key);
   if (memEntry) {
     const now = Date.now();
     if (now - memEntry.timestamp < CACHE_EXPIRY_MS) {
       return memEntry.firstImageUrl;
     }
     // Expired, remove from memory
-    memoryCache.delete(handle);
+    memoryCache.delete(key);
   }
   
   // Check localStorage
   const cache = loadCache();
-  const entry = cache[handle];
+  const entry = cache[key];
   if (entry) {
-    memoryCache.set(handle, entry);
+    memoryCache.set(key, entry);
     return entry.firstImageUrl;
   }
   
@@ -78,36 +85,43 @@ export function getCachedImageUrl(handle: string): string | null | undefined {
 }
 
 // Fetch and cache image URL
-export async function fetchAndCacheImageUrl(handle: string): Promise<string | null> {
+export async function fetchAndCacheImageUrl(handle: string, o1?: string | null, o2?: string | null, o3?: string | null): Promise<string | null> {
   // Check cache first
-  const cached = getCachedImageUrl(handle);
+  const cached = getCachedImageUrl(handle, o1, o2, o3);
   if (cached !== undefined) {
     return cached;
   }
   
   // Make API call
   try {
-    const res = await fetch(`/api/images/${encodeURIComponent(handle)}`);
+    const params = new URLSearchParams();
+    if (o1) params.set('o1', o1);
+    if (o2) params.set('o2', o2);
+    if (o3) params.set('o3', o3);
+    const qs = params.toString();
+    const res = await fetch(`/api/images/${encodeURIComponent(handle)}${qs ? `?${qs}` : ''}`);
     if (res.ok) {
       const data = await res.json();
+      const key = buildKey(handle, o1, o2, o3);
       const entry: ImageCacheEntry = {
-        handle,
+        key,
         firstImageUrl: data.firstImageUrl || null,
         images: data.images || [],
         timestamp: Date.now(),
       };
-      saveCache(handle, entry);
+      saveCache(key, entry);
       return entry.firstImageUrl;
     }
   } catch (e) {
     // Cache null result to avoid repeated failed calls
+    const key = buildKey(handle, o1, o2, o3);
     const entry: ImageCacheEntry = {
-      handle,
+      key,
       firstImageUrl: null,
       images: [],
       timestamp: Date.now(),
     };
-    saveCache(handle, entry);
+    saveCache(key, entry);
   }
   
   return null;
