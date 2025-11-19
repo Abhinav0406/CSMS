@@ -196,15 +196,15 @@ export function ProductTable({ initialProducts }: Props) {
     // Variant rows (Color/Size combined) - group by SKU + Variant only (aggregate across all locations)
     const byKey = new Map<string, Agg>();
     const orderByKey = new Map<string, number>();
-    if (supabase && variantRows.length > 0) {
+    if (variantRows.length > 0) {
       for (const v of variantRows) {
         const color = (v.color || '').trim();
         const size = (v.size || '').trim();
-        // Group by SKU + Variant only (NOT by location)
         const variantKeyLabel = color || size || 'Unspecified';
-        const k = `${v.sku}__${variantKeyLabel}`;
+        const locationKey = (v.location || '').trim();
+        const k = `${v.sku}__${locationKey}__${variantKeyLabel}`;
         const prefix = extractPrefix(v.sku);
-        const a = byKey.get(k) || { sku: v.sku, location: undefined, name: sampleBySku.get(v.sku)?.name || v.sku, variant: variantKeyLabel, color: color || null, size: size || null, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0, prefix };
+        const a = byKey.get(k) || { sku: v.sku, location: locationKey || undefined, name: sampleBySku.get(v.sku)?.name || v.sku, variant: variantKeyLabel, color: color || null, size: size || null, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0, prefix };
         a.onHandCurrent += Number(v.on_hand_current || 0);
         a.onHandNew += Number(v.on_hand_new || 0);
         a.committed += Number(v.committed || 0);
@@ -223,10 +223,10 @@ export function ProductTable({ initialProducts }: Props) {
         const color = (extractColor(r.rawRow, r.rawHeaders) || '').trim();
         const size = (extractSize(r.rawRow, r.rawHeaders) || '').trim();
         const variantKeyLabel = color || size || 'Unspecified';
-        // Group by SKU + Variant only (NOT by location)
-        const k = `${r.sku}__${variantKeyLabel}`;
+        const locationKey = (r.location || '').trim();
+        const k = `${r.sku}__${locationKey}__${variantKeyLabel}`;
         const prefix = extractPrefix(r.sku);
-        const a = byKey.get(k) || { sku: r.sku, location: undefined, name: r.name, variant: variantKeyLabel, color, size, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0, prefix };
+        const a = byKey.get(k) || { sku: r.sku, location: locationKey || undefined, name: r.name, variant: variantKeyLabel, color, size, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0, prefix };
         a.onHandCurrent += (typeof r.onHandCurrent === 'number' ? r.onHandCurrent : 0);
         a.onHandNew += r.onHandNew || 0;
         a.committed += r.committed || 0;
@@ -241,8 +241,8 @@ export function ProductTable({ initialProducts }: Props) {
     }
     for (const a of byKey.values()) a.available = a.onHandCurrent - a.committed;
     const sorted = Array.from(byKey.values()).sort((x,y)=>{
-      const kx = `${x.sku}__${x.variant || ''}`;
-      const ky = `${y.sku}__${y.variant || ''}`;
+      const kx = `${x.sku}__${x.location || ''}__${x.variant || ''}`;
+      const ky = `${y.sku}__${y.location || ''}__${y.variant || ''}`;
       const ox = orderByKey.get(kx);
       const oy = orderByKey.get(ky);
       if (ox != null && oy != null && ox !== oy) return ox - oy;
