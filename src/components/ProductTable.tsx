@@ -23,7 +23,6 @@ export function ProductTable({ initialProducts }: Props) {
   const pathname = usePathname();
   const [isEdit, setIsEdit] = useState<boolean>(false);
   const [rows, setRows] = useState<Product[]>(initialProducts);
-  const STORAGE_KEY = 'csms_products_v1';
   const PAGE_SIZE = 50;
   // Initialize page from URL params, fallback to 1
   const getInitialPage = () => {
@@ -57,30 +56,12 @@ export function ProductTable({ initialProducts }: Props) {
     })();
   }, []);
 
-  // load persisted rows on mount
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Product[];
-        if (Array.isArray(parsed)) setRows(parsed);
-      }
-    } catch {}
-  }, []);
-
-  const persist = (next: Product[]) => {
-    if (typeof window === 'undefined') return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
-  };
-
   // Refresh function to reload data from Supabase
   const refreshData = useCallback(async () => {
     try {
       const remote = await fetchProducts();
       if (remote.length > 0) {
         setRows(remote);
-        persist(remote);
       }
       // Also refresh variants
       const v = await fetchAllVariants();
@@ -88,7 +69,7 @@ export function ProductTable({ initialProducts }: Props) {
     } catch (error) {
       console.error('Failed to refresh data:', error);
     }
-  }, []); // Empty deps - setRows, setVariantRows, and persist are stable
+  }, []); // Empty deps - setRows and setVariantRows are stable
 
   // then try Supabase (authoritative)
   useEffect(() => {
@@ -215,7 +196,7 @@ export function ProductTable({ initialProducts }: Props) {
     // Variant rows (Color/Size combined) - group by SKU + Variant only (aggregate across all locations)
     const byKey = new Map<string, Agg>();
     const orderByKey = new Map<string, number>();
-    if (variantRows.length > 0) {
+    if (supabase && variantRows.length > 0) {
       for (const v of variantRows) {
         const color = (v.color || '').trim();
         const size = (v.size || '').trim();
@@ -407,7 +388,6 @@ export function ProductTable({ initialProducts }: Props) {
     if (typeof window === 'undefined') return;
     try {
       // Clear all CSMS-related localStorage keys
-      localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem('csms_last_headers');
       
       // Refresh data from Supabase
@@ -620,7 +600,6 @@ export function ProductTable({ initialProducts }: Props) {
       for (const p of prev) byKey.set(keyFor(p), p);
       for (const p of parsedDedup) byKey.set(keyFor(p), { ...(byKey.get(keyFor(p)) || {} as Product), ...p });
       const nextArr = Array.from(byKey.values());
-      persist(nextArr);
       return nextArr;
     });
     // Validate that we have data to import

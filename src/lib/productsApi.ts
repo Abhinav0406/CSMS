@@ -3,12 +3,37 @@ import { Product } from '@/lib/inventory';
 
 export async function fetchProducts(): Promise<Product[]> {
   if (!supabase) return [] as Product[];
-  const { data, error } = await supabase
-    .from('products')
-    .select('*')
-    .order('updated_at', { ascending: false });
-  if (error || !data) return [] as Product[];
-  return data.map(rowToProduct);
+  
+  let allData: any[] = [];
+  let page = 0;
+  const pageSize = 1000;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+
+    if (error) {
+      console.error('Error fetching products page', page, error);
+      break;
+    }
+
+    if (data) {
+      allData = allData.concat(data);
+      if (data.length < pageSize) {
+        hasMore = false;
+      } else {
+        page++;
+      }
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return allData.map(rowToProduct);
 }
 
 export async function upsertProducts(items: Product[]): Promise<void> {
@@ -95,11 +120,36 @@ export type ProductVariantRow = {
 
 export async function fetchAllVariants(): Promise<ProductVariantRow[]> {
   if (!supabase) return [] as ProductVariantRow[];
-  const { data, error } = await supabase
-    .from('product_variants')
-    .select('sku, location, color, size, on_hand_current, on_hand_new, committed, incoming');
-  if (error || !data) return [] as ProductVariantRow[];
-  return data as ProductVariantRow[];
+  
+  let allData: ProductVariantRow[] = [];
+  let page = 0;
+  const pageSize = 1000;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('product_variants')
+      .select('sku, location, color, size, on_hand_current, on_hand_new, committed, incoming')
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+
+    if (error) {
+      console.error('Error fetching variants page', page, error);
+      break;
+    }
+
+    if (data) {
+      allData = allData.concat(data as ProductVariantRow[]);
+      if (data.length < pageSize) {
+        hasMore = false;
+      } else {
+        page++;
+      }
+    } else {
+      hasMore = false;
+    }
+  }
+  
+  return allData;
 }
 
 export async function updateOnHandNew(sku: string, location: string, onHandNew: number): Promise<void> {
