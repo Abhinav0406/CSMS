@@ -68,6 +68,7 @@ create table if not exists public.product_variants (
   location text not null,
   color text,  -- app sends '' when no color
   size text,   -- app sends '' when no size
+  source_row_id text default '',
   on_hand_current integer default 0,
   on_hand_new integer default 0,
   committed integer default 0,
@@ -95,7 +96,7 @@ begin
   end if;
 
   alter table public.product_variants
-    add constraint product_variants_unique unique (sku, location, color, size);
+    add constraint product_variants_unique unique (sku, location, color, size, source_row_id);
 end $$;
 
 -- enable RLS + policies for variants
@@ -107,28 +108,37 @@ begin
     select 1 from pg_policies
     where schemaname='public' and tablename='product_variants' and policyname='product_variants_insert'
   ) then
-    create policy product_variants_insert on public.product_variants
+    execute 'create policy product_variants_insert on public.product_variants
       for insert to authenticated
-      with check (true);
+      with check (true);';
   end if;
 
   if not exists (
     select 1 from pg_policies
     where schemaname='public' and tablename='product_variants' and policyname='product_variants_update'
   ) then
-    create policy product_variants_update on public.product_variants
+    execute 'create policy product_variants_update on public.product_variants
       for update to authenticated
       using (true)
-      with check (true);
+      with check (true);';
   end if;
 
   if not exists (
     select 1 from pg_policies
     where schemaname='public' and tablename='product_variants' and policyname='product_variants_select'
   ) then
-    create policy product_variants_select on public.product_variants
+    execute 'create policy product_variants_select on public.product_variants
       for select to authenticated
-      using (true);
+      using (true);';
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname='public' and tablename='product_variants' and policyname='product_variants_delete'
+  ) then
+    execute 'create policy product_variants_delete on public.product_variants
+      for delete to authenticated
+      using (true);';
   end if;
 end $$;
 

@@ -60,28 +60,34 @@ export async function upsertProductVariants(items: Array<{
   incoming?: number;
   unavailable?: number;
   raw?: Record<string, any>;
+  sourceRowId?: string | null;
 }>): Promise<void> {
   if (!supabase || items.length === 0) return;
   // 1) Collapse duplicates in the incoming array by (sku, location, color, size)
   const byKey = new Map<string, {
     sku: string; location: string; color: string; size: string;
     on_hand_current: number; on_hand_new: number; committed: number; incoming: number; unavailable: number; raw: Record<string, any>;
+    source_row_id: string;
   }>();
   for (const v of items) {
-    const key = [v.sku, v.location, (v.color ?? '').trim(), (v.size ?? '').trim()].join('__');
+    const color = (v.color ?? '').trim();
+    const size = (v.size ?? '').trim();
+    const sourceRowId = (v.sourceRowId ?? '').trim();
+    const key = [v.sku, v.location, color, size, sourceRowId].join('__');
     const prev = byKey.get(key);
     if (!prev) {
       byKey.set(key, {
         sku: v.sku,
         location: v.location,
-        color: (v.color ?? '').trim(),
-        size: (v.size ?? '').trim(),
+        color,
+        size,
         on_hand_current: v.on_hand_current ?? 0,
         on_hand_new: v.on_hand_new ?? 0,
         committed: v.committed ?? 0,
         incoming: v.incoming ?? 0,
         unavailable: v.unavailable ?? 0,
         raw: v.raw ?? {},
+        source_row_id: sourceRowId,
       });
     } else {
       // Aggregate numeric fields when duplicates appear (e.g., multiple CSV rows for same variant)
@@ -101,7 +107,19 @@ export async function upsertProductVariants(items: Array<{
     const slice = payload.slice(i, i + CHUNK);
     const { error } = await supabase
       .from('product_variants')
-      .upsert(slice, { onConflict: 'sku,location,color,size' });
+      .upsert(slice, { onConflict: 'sku,location,color,size,source_row_id' });
+    if (error) throw error;
+  }
+}
+
+export async function deleteVariantsBySkus(skus: string[]): Promise<void> {
+  if (!supabase || skus.length === 0) return;
+  const unique = Array.from(new Set(skus.filter(Boolean)));
+  if (unique.length === 0) return;
+  const CHUNK = 200;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const slice = unique.slice(i, i + CHUNK);
+    const { error } = await supabase.from('product_variants').delete().in('sku', slice);
     if (error) throw error;
   }
 }
@@ -116,6 +134,9 @@ export type ProductVariantRow = {
   on_hand_new: number | null;
   committed: number | null;
   incoming: number | null;
+  source_row_id?: string | null;
+  unavailable: number | null;
+  raw?: Record<string, any> | null;
 };
 
 export async function fetchAllVariants(): Promise<ProductVariantRow[]> {
@@ -129,7 +150,7 @@ export async function fetchAllVariants(): Promise<ProductVariantRow[]> {
   while (hasMore) {
     const { data, error } = await supabase
       .from('product_variants')
-      .select('sku, location, color, size, on_hand_current, on_hand_new, committed, incoming')
+      .select('sku, location, color, size, on_hand_current, on_hand_new, committed, incoming, unavailable, source_row_id, raw')
       .range(page * pageSize, (page + 1) * pageSize - 1);
 
     if (error) {

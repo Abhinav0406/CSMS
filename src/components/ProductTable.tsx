@@ -9,7 +9,7 @@ import { Product, computeAvailable, computeTotal } from '@/lib/inventory';
 import { ImageWithFallback } from '@/components/ImageWithFallback';
 import { InventoryCard } from '@/components/InventoryCard';
 import { getCurrentSession } from '@/lib/auth';
-import { fetchProducts, upsertProducts, updateOnHandNew, updateCommittedQty, upsertProductVariants, fetchAllVariants, ProductVariantRow } from '@/lib/productsApi';
+import { fetchProducts, upsertProducts, updateOnHandNew, updateCommittedQty, upsertProductVariants, fetchAllVariants, ProductVariantRow, deleteVariantsBySkus } from '@/lib/productsApi';
 import { supabase } from '@/lib/supabaseClient';
 import { getCachedImageUrl, fetchAndCacheImageUrl, preloadImages } from '@/lib/imageCache';
 
@@ -196,15 +196,15 @@ export function ProductTable({ initialProducts }: Props) {
     // Variant rows (Color/Size combined) - group by SKU + Variant only (aggregate across all locations)
     const byKey = new Map<string, Agg>();
     const orderByKey = new Map<string, number>();
-    if (variantRows.length > 0) {
+    if (supabase && variantRows.length > 0) {
       for (const v of variantRows) {
         const color = (v.color || '').trim();
         const size = (v.size || '').trim();
+        // Group by SKU + Variant only (NOT by location)
         const variantKeyLabel = color || size || 'Unspecified';
-        const locationKey = (v.location || '').trim();
-        const k = `${v.sku}__${locationKey}__${variantKeyLabel}`;
+        const k = `${v.sku}__${variantKeyLabel}`;
         const prefix = extractPrefix(v.sku);
-        const a = byKey.get(k) || { sku: v.sku, location: locationKey || undefined, name: sampleBySku.get(v.sku)?.name || v.sku, variant: variantKeyLabel, color: color || null, size: size || null, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0, prefix };
+        const a = byKey.get(k) || { sku: v.sku, location: undefined, name: sampleBySku.get(v.sku)?.name || v.sku, variant: variantKeyLabel, color: color || null, size: size || null, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0, prefix };
         a.onHandCurrent += Number(v.on_hand_current || 0);
         a.onHandNew += Number(v.on_hand_new || 0);
         a.committed += Number(v.committed || 0);
@@ -223,10 +223,10 @@ export function ProductTable({ initialProducts }: Props) {
         const color = (extractColor(r.rawRow, r.rawHeaders) || '').trim();
         const size = (extractSize(r.rawRow, r.rawHeaders) || '').trim();
         const variantKeyLabel = color || size || 'Unspecified';
-        const locationKey = (r.location || '').trim();
-        const k = `${r.sku}__${locationKey}__${variantKeyLabel}`;
+        // Group by SKU + Variant only (NOT by location)
+        const k = `${r.sku}__${variantKeyLabel}`;
         const prefix = extractPrefix(r.sku);
-        const a = byKey.get(k) || { sku: r.sku, location: locationKey || undefined, name: r.name, variant: variantKeyLabel, color, size, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0, prefix };
+        const a = byKey.get(k) || { sku: r.sku, location: undefined, name: r.name, variant: variantKeyLabel, color, size, onHandCurrent: 0, onHandNew: 0, committed: 0, incoming: 0, available: 0, prefix };
         a.onHandCurrent += (typeof r.onHandCurrent === 'number' ? r.onHandCurrent : 0);
         a.onHandNew += r.onHandNew || 0;
         a.committed += r.committed || 0;
@@ -241,8 +241,8 @@ export function ProductTable({ initialProducts }: Props) {
     }
     for (const a of byKey.values()) a.available = a.onHandCurrent - a.committed;
     const sorted = Array.from(byKey.values()).sort((x,y)=>{
-      const kx = `${x.sku}__${x.location || ''}__${x.variant || ''}`;
-      const ky = `${y.sku}__${y.location || ''}__${y.variant || ''}`;
+      const kx = `${x.sku}__${x.variant || ''}`;
+      const ky = `${y.sku}__${y.variant || ''}`;
       const ox = orderByKey.get(kx);
       const oy = orderByKey.get(ky);
       if (ox != null && oy != null && ox !== oy) return ox - oy;
@@ -409,84 +409,95 @@ export function ProductTable({ initialProducts }: Props) {
       // Fetch fresh data directly from database for export
       const freshProducts = await fetchProducts();
       
-      // Prefer exporting from product_variants (exact variant rows) if available
-      if (supabase) {
-        const { data: variantData, error: variantError } = await supabase.from('product_variants').select('*');
-        if (!variantError && variantData && variantData.length > 0) {
-          // Fetch products to get metadata (title, handle, etc.)
-          const { data: productsData } = await supabase.from('products').select('*');
-          const productsMap = new Map<string, any>();
-          if (productsData) {
-            for (const p of productsData) {
-              const key = `${p.sku}__${p.location}`;
-              productsMap.set(key, p);
-            }
+      const variantData = await fetchAllVariants();
+      if (variantData.length > 0) {
+        // Sort by original import order (__order in raw field) to preserve row order
+        const sortedVariantData = [...variantData].sort((a, b) => {
+          const orderA = Number((a.raw as any)?.['__order'] ?? Infinity);
+          const orderB = Number((b.raw as any)?.['__order'] ?? Infinity);
+          if (Number.isFinite(orderA) && Number.isFinite(orderB)) {
+            return orderA - orderB;
           }
+          if (Number.isFinite(orderA)) return -1;
+          if (Number.isFinite(orderB)) return 1;
+          // If no order, maintain database order
+          return 0;
+        });
 
-          const headers = buildVariantExportHeaders();
-          const lines: string[] = [headers.join(',')];
-          for (const v of variantData as any[]) {
-            const raw: Record<string, any> = v.raw || {};
-            const record: Record<string, any> = { ...raw };
-            
-            // Get product metadata
-            const productKey = `${v.sku}__${v.location}`;
-            const product = productsMap.get(productKey);
-            
-            // Ensure critical fields are current from database
-            record['SKU'] = v.sku || raw['SKU'] || '';
-            record['Location'] = v.location || raw['Location'] || '';
-            if (product) {
-              record['Title'] = product.title || raw['Title'] || '';
-              record['Handle'] = product.handle || raw['Handle'] || '';
-            }
-            
-            // Update stock values from database (most current)
-            record['On hand (current)'] = v.on_hand_current ?? raw['On hand (current)'] ?? 0;
-            record['On hand (new)'] = v.on_hand_new ?? raw['On hand (new)'] ?? 0;
-            record['Committed (not editable)'] = v.committed ?? raw['Committed (not editable)'] ?? 0;
-            record['Incoming (not editable)'] = v.incoming ?? raw['Incoming (not editable)'] ?? 0;
-            record['Unavailable (not editable)'] = v.unavailable ?? raw['Unavailable (not editable)'] ?? 0;
-            
-            // Recompute Available from new - committed
-            const recomputedAvailable = Number(record['On hand (new)'] || 0) - Number(record['Committed (not editable)'] || 0);
-            record['Available (not editable)'] = recomputedAvailable;
-            
-            // Include variant fields if present
-            if (v.color) {
-              record['Option1 Value'] = v.color;
-              record['Option1 Name'] = 'Color';
-            }
-            if (v.size) {
-              record['Option2 Value'] = v.size;
-              record['Option2 Name'] = 'Size';
-            }
-            
-            const rowValues = headers.map((h) => escapeCsv(record[h] ?? ''));
-            lines.push(rowValues.join(','));
+        const { data: productsData } = await supabase.from('products').select('*');
+        const productsMap = new Map<string, any>();
+        if (productsData) {
+          for (const p of productsData) {
+            const key = `${p.sku}__${p.location}`;
+            productsMap.set(key, p);
           }
-          downloadCsv(lines.join('\n'), 'csms-variants-export.csv');
-          return;
         }
+
+        const headers = buildVariantExportHeaders();
+        const lines: string[] = [headers.join(',')];
+        for (const v of sortedVariantData as any[]) {
+          const raw: Record<string, any> = (v as any).raw || {};
+          // Start with ALL original values from import - preserve everything exactly
+          const record: Record<string, any> = { ...raw };
+
+          // ONLY update the inventory calculation fields - ALWAYS convert to numbers (not text)
+          // Shopify requires actual numbers, not text strings that look like numbers
+          record['On hand (current)'] = Number(v.on_hand_current ?? raw['On hand (current)'] ?? 0);
+          record['On hand (new)'] = Number(v.on_hand_new ?? raw['On hand (new)'] ?? 0);
+          record['Committed (not editable)'] = Number(v.committed ?? raw['Committed (not editable)'] ?? 0);
+          record['Incoming (not editable)'] = Number(v.incoming ?? raw['Incoming (not editable)'] ?? 0);
+          record['Unavailable (not editable)'] = Number(v.unavailable ?? raw['Unavailable (not editable)'] ?? 0);
+
+          // Recalculate available: Available = On hand (current) - Committed
+          const recomputedAvailable = record['On hand (current)'] - record['Committed (not editable)'];
+          record['Available (not editable)'] = recomputedAvailable;
+          
+          // All other fields (SKU, Location, Handle, Title, Option1 Name, Option1 Value, Option2 Name, Option2 Value, etc.)
+          // are preserved EXACTLY as they were in the original import from the raw data
+
+          const rowValues = headers.map((h) => escapeCsv(record[h] ?? ''));
+          lines.push(rowValues.join(','));
+        }
+
+        downloadCsv(lines.join('\n'), 'csms-variants-export.csv');
+        return;
       }
 
       // Fallback to products rows export (use fresh data from database)
-      const headers = buildExportHeaders(freshProducts);
+      // Sort by original import order (__order in rawRow) to preserve row order
+      const sortedProducts = [...freshProducts].sort((a, b) => {
+        const orderA = Number((a.rawRow as any)?.['__order'] ?? Infinity);
+        const orderB = Number((b.rawRow as any)?.['__order'] ?? Infinity);
+        if (Number.isFinite(orderA) && Number.isFinite(orderB)) {
+          return orderA - orderB;
+        }
+        if (Number.isFinite(orderA)) return -1;
+        if (Number.isFinite(orderB)) return 1;
+        // If no order, maintain database order
+        return 0;
+      });
+
+      const headers = buildExportHeaders(sortedProducts);
       const lines = [headers.join(',')];
-      for (const r of freshProducts) {
-        const record: Record<string, string> = { ...(r.rawRow || {}) };
-        // Update with current values from database
-        upsert(record, 'On hand (new)', String(r.onHandNew));
-        upsert(record, 'On hand (current)', String(r.onHandCurrent));
-        upsert(record, 'Committed (not editable)', String(r.committed));
-        const recomputedAvailable = r.onHandNew - r.committed;
-        upsert(record, 'Available (not editable)', String(recomputedAvailable));
-        if (typeof r.incoming === 'number') upsert(record, 'Incoming (not editable)', String(r.incoming));
-        if (typeof r.unavailable === 'number') upsert(record, 'Unavailable (not editable)', String(r.unavailable));
-        if (r.sku) upsert(record, 'SKU', r.sku);
-        if (r.location) upsert(record, 'Location', r.location);
-        if (r.name) upsert(record, 'Title', r.name);
-        if (r.handle) upsert(record, 'Handle', r.handle);
+      for (const r of sortedProducts) {
+        // Start with ALL original values from import - preserve everything exactly
+        const record: Record<string, string | number> = { ...(r.rawRow || {}) };
+        
+        // ONLY update the inventory calculation fields - ALWAYS convert to numbers (not text)
+        // Shopify requires actual numbers, not text strings that look like numbers
+        record['On hand (new)'] = Number(r.onHandNew);
+        record['On hand (current)'] = Number(r.onHandCurrent);
+        record['Committed (not editable)'] = Number(r.committed);
+        // Recalculate available: Available = On hand (current) - Committed
+        const recomputedAvailable = record['On hand (current)'] - record['Committed (not editable)'];
+        record['Available (not editable)'] = recomputedAvailable;
+        if (typeof r.incoming === 'number') record['Incoming (not editable)'] = Number(r.incoming);
+        else if (r.incoming != null) record['Incoming (not editable)'] = Number(r.incoming) || 0;
+        if (typeof r.unavailable === 'number') record['Unavailable (not editable)'] = Number(r.unavailable);
+        else if (r.unavailable != null) record['Unavailable (not editable)'] = Number(r.unavailable) || 0;
+        
+        // All other fields (SKU, Location, Handle, Title, Option1 Name, Option1 Value, Option2 Name, Option2 Value, etc.)
+        // are preserved EXACTLY as they were in the original import from rawRow
         const rowValues = headers.map((h) => escapeCsv(record[h] ?? ''));
         lines.push(rowValues.join(','));
       }
@@ -634,12 +645,15 @@ export function ProductTable({ initialProducts }: Props) {
           return;
         }
 
-        // Build and upsert variant rows keyed by (sku, location, color, size)
-        const variantRows: Array<{ sku: string; location: string; color?: string | null; size?: string | null; on_hand_current?: number; on_hand_new?: number; committed?: number; incoming?: number; unavailable?: number; raw?: Record<string, any> }>
+        // Build and upsert variant rows keyed by (sku, location, color, size, sourceRowId)
+        const variantRows: Array<{ sku: string; location: string; color?: string | null; size?: string | null; on_hand_current?: number; on_hand_new?: number; committed?: number; incoming?: number; unavailable?: number; raw?: Record<string, any>; sourceRowId?: string | null }>
           = [];
         for (const p of parsed) {
           const color = extractColor(p.rawRow, p.rawHeaders) || null;
           const size = extractSize(p.rawRow, p.rawHeaders) || null;
+          const rawOrder = (p.rawRow as any)?.['__order'];
+          const variantId = (p.rawRow as any)?.['Variant ID'] ?? (p.rawRow as any)?.['Variant SKU'];
+          const sourceRowId = String(variantId ?? rawOrder ?? `${p.sku}-${p.location}-${Math.random()}`);
           variantRows.push({
             sku: p.sku,
             location: p.location as any,
@@ -651,9 +665,17 @@ export function ProductTable({ initialProducts }: Props) {
             incoming: p.incoming || 0,
             unavailable: p.unavailable || 0,
             raw: p.rawRow as any,
+            sourceRowId,
           });
         }
         
+        try {
+          await deleteVariantsBySkus(Array.from(new Set(parsed.map((p) => p.sku))));
+        } catch (delErr) {
+          console.error('Failed to clear existing variants before import', delErr);
+          setNotice({ type: 'warning', message: `Warning: couldn't clear previous variants: ${delErr instanceof Error ? delErr.message : String(delErr)}` });
+        }
+
         let variantsCount = 0;
         if (variantRows.length > 0) {
           try {
@@ -722,10 +744,28 @@ export function ProductTable({ initialProducts }: Props) {
     return result;
   }
 
-  function escapeCsv(v: string): string {
-    if (v == null) return '';
-    if (/[",\n]/.test(v)) return `"${v.replaceAll('"','""')}"`;
-    return v;
+  function escapeCsv(v: string | number): string {
+    if (v == null || v === '') return '';
+    
+    // If it's a number, export as number (no quotes) to prevent Excel text formatting errors
+    if (typeof v === 'number') {
+      return String(v);
+    }
+    
+    // Convert to string for string values
+    const s = String(v);
+    
+    // Only quote if it contains special characters that need escaping
+    if (/[",\n]/.test(s)) return `"${s.replaceAll('"','""')}"`;
+    
+    // For numeric strings (like "123"), export without quotes so Excel treats them as numbers
+    // Check if it's a valid number string (integer or decimal)
+    const numMatch = /^-?\d+(\.\d+)?$/.test(s.trim());
+    if (numMatch) {
+      return s.trim(); // Return without quotes so Excel recognizes it as a number
+    }
+    
+    return s;
   }
 
   function downloadCsv(content: string, filename: string) {
@@ -798,43 +838,15 @@ export function ProductTable({ initialProducts }: Props) {
   }
 
   function buildExportHeaders(items: Product[]): string[] {
-    // 1) Prefer the exact last imported header order
-    try {
-      if (typeof window !== 'undefined') {
-        const raw = localStorage.getItem('csms_last_headers');
-        if (raw) {
-          const hdrs = JSON.parse(raw) as string[];
-          if (Array.isArray(hdrs) && hdrs.length > 0) return hdrs;
-        }
-      }
-    } catch {}
-    // 2) Otherwise, merge rawHeaders from current rows in first-seen order
-    const withRaw = items.filter((p) => p.rawHeaders && p.rawHeaders.length > 0);
-    if (withRaw.length > 0) {
-      const seen = new Set<string>();
-      const headers: string[] = [];
-      for (const p of withRaw) {
-        for (const h of p.rawHeaders!) {
-          if (!seen.has(h)) { seen.add(h); headers.push(h); }
-        }
-      }
-      return headers;
-    }
-    // 3) Fallback default order
+    // Always use Shopify's required column order for exports
+    // This ensures Shopify can properly import the file
     return ['Handle','Title','SKU','Location','Incoming (not editable)','Unavailable (not editable)','Committed (not editable)','Available (not editable)','On hand (current)','On hand (new)'];
   }
 
   function buildVariantExportHeaders(): string[] {
-    try {
-      if (typeof window !== 'undefined') {
-        const raw = localStorage.getItem('csms_last_headers');
-        if (raw) {
-          const hdrs = JSON.parse(raw) as string[];
-          if (Array.isArray(hdrs) && hdrs.length > 0) return hdrs;
-        }
-      }
-    } catch {}
-    // Default Shopify header order
+    // Always use Shopify's required column order for variant exports
+    // This ensures Shopify can properly import the file
+    // Note: Shopify requires this specific order for inventory imports
     return ['Handle','Title','Option1 Name','Option1 Value','Option2 Name','Option2 Value','Option3 Name','Option3 Value','SKU','HS Code','COO','Location','Bin name','Incoming (not editable)','Unavailable (not editable)','Committed (not editable)','Available (not editable)','On hand (current)','On hand (new)'];
   }
 
